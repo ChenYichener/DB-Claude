@@ -87,6 +87,8 @@ struct ConnectionRow: View {
     @State private var databases: [String] = []
     @State private var isLoading: Bool = false
     @State private var isHovering: Bool = false
+    @State private var isConnected: Bool = false  // 连接状态追踪
+    @State private var connectionError: String?   // 连接错误信息
 
     // 是否选中连接
     private var isConnectionSelected: Bool {
@@ -170,12 +172,8 @@ struct ConnectionRow: View {
             
             Spacer()
             
-            // 状态指示器
-            if highlightState == .childSelected {
-                Circle()
-                    .fill(AppColors.accent)
-                    .frame(width: 6, height: 6)
-            }
+            // 连接状态指示器
+            connectionStatusIndicator
         }
         .padding(.vertical, AppSpacing.sm)
         .padding(.horizontal, AppSpacing.sm)
@@ -197,6 +195,22 @@ struct ConnectionRow: View {
         }
         .foregroundColor(foregroundColorForState)
         .contextMenu {
+            // 连接操作
+            Button(action: {
+                reconnect()
+            }) {
+                Label("重新连接", systemImage: "arrow.clockwise")
+            }
+            
+            Button(action: {
+                closeConnection()
+            }) {
+                Label("关闭连接", systemImage: "xmark.circle")
+            }
+            .disabled(!isConnected && databases.isEmpty)
+            
+            Divider()
+            
             Button(action: {
                 editingConnection = connection
             }) {
@@ -211,9 +225,38 @@ struct ConnectionRow: View {
                     selection = nil
                 }
             }) {
-                Label("删除", systemImage: "trash")
+                Label("删除连接", systemImage: "trash")
             }
         }
+    }
+    
+    // 连接状态指示器视图
+    @ViewBuilder
+    private var connectionStatusIndicator: some View {
+        if isLoading {
+            // 正在连接中
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.7)
+        } else if connectionError != nil {
+            // 连接错误
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 10))
+                .foregroundColor(AppColors.error)
+                .help(connectionError ?? "连接错误")
+        } else if isConnected {
+            // 已连接
+            Circle()
+                .fill(AppColors.success)
+                .frame(width: 6, height: 6)
+                .help("已连接")
+        } else if highlightState == .childSelected {
+            // 选中了子数据库
+            Circle()
+                .fill(AppColors.accent)
+                .frame(width: 6, height: 6)
+        }
+        // 未连接状态不显示指示器
     }
     
     private var iconColor: Color {
@@ -254,6 +297,7 @@ struct ConnectionRow: View {
     
     private func loadDatabases() {
         isLoading = true
+        connectionError = nil
         Task {
             do {
                 var driver: DatabaseDriver?
@@ -276,13 +320,57 @@ struct ConnectionRow: View {
                     await MainActor.run {
                         self.databases = dbs
                         self.isLoading = false
+                        self.isConnected = true
+                        self.connectionError = nil
                     }
                 } else {
-                     await MainActor.run { self.isLoading = false }
+                     await MainActor.run { 
+                        self.isLoading = false 
+                        self.isConnected = false
+                    }
                 }
             } catch {
                 print("Error loading databases: \(error)")
-                await MainActor.run { self.isLoading = false }
+                await MainActor.run { 
+                    self.isLoading = false 
+                    self.isConnected = false
+                    self.connectionError = error.localizedDescription
+                }
+            }
+        }
+    }
+    
+    // MARK: - 连接操作方法
+    
+    /// 重新连接 - 重新加载数据库列表
+    private func reconnect() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            // 清空现有数据
+            databases = []
+            connectionError = nil
+            isConnected = false
+            // 重新加载
+            loadDatabases()
+            // 确保展开以显示结果
+            if !isExpanded {
+                isExpanded = true
+            }
+        }
+    }
+    
+    /// 关闭连接 - 断开连接并折叠列表
+    private func closeConnection() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            // 折叠列表
+            isExpanded = false
+            // 清空数据库列表
+            databases = []
+            // 更新连接状态
+            isConnected = false
+            connectionError = nil
+            // 如果当前选中的是这个连接或其子数据库，清除选中
+            if case .database(let c, _) = selection, c.id == connection.id {
+                selection = nil
             }
         }
     }

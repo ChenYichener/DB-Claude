@@ -110,6 +110,9 @@ struct EditableResultsGridView: NSViewRepresentable {
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         
+        // 设置编辑模式
+        tableView.isEditingEnabled = isEditable
+        
         // 设置代理和数据源
         let coordinator = context.coordinator
         tableView.delegate = coordinator
@@ -128,7 +131,7 @@ struct EditableResultsGridView: NSViewRepresentable {
     }
     
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let tableView = scrollView.documentView as? NSTableView else { return }
+        guard let tableView = scrollView.documentView as? EditableTableView else { return }
         
         let coordinator = context.coordinator
         let needsReload = coordinator.dataHash != dataHash || coordinator.columns != columns
@@ -145,6 +148,9 @@ struct EditableResultsGridView: NSViewRepresentable {
         coordinator.onCellEdit = onCellEdit
         coordinator.onRowSelect = onRowSelect
         coordinator.onCopySQL = onCopySQL
+        
+        // 更新编辑模式
+        tableView.isEditingEnabled = isEditable
         
         // 检查列是否变化
         let existingColumns = tableView.tableColumns.map { $0.identifier.rawValue }
@@ -292,12 +298,13 @@ struct EditableResultsGridView: NSViewRepresentable {
                 cellView.cell?.truncatesLastVisibleLine = true
                 cellView.drawsBackground = false
                 cellView.isBordered = false
-                cellView.focusRingType = .none
+                cellView.focusRingType = .default  // 编辑时显示焦点环
                 cellView.delegate = self
             }
             
-            // 设置是否可编辑
+            // 设置是否可编辑和可选择（两者都需要为 true 才能正常编辑）
             cellView.isEditable = isEditable
+            cellView.isSelectable = isEditable
             
             // 检查是否有编辑过的值
             let editKey = "\(row)_\(columnIndex)"
@@ -454,6 +461,10 @@ struct EditableResultsGridView: NSViewRepresentable {
 
 // MARK: - 可编辑的 NSTableView 子类
 class EditableTableView: NSTableView {
+    
+    // 是否允许编辑
+    var isEditingEnabled: Bool = false
+    
     override func noteNumberOfRowsChanged() {
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
@@ -463,9 +474,50 @@ class EditableTableView: NSTableView {
     
     override var isOpaque: Bool { true }
     
-    // 双击开始编辑
-    override func textDidBeginEditing(_ notification: Notification) {
-        super.textDidBeginEditing(notification)
+    // 关键：允许 NSTextField 成为第一响应者，这样双击才能进入编辑模式
+    override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+        // 如果编辑已启用且响应者是 NSTextField，允许它成为第一响应者
+        if isEditingEnabled && responder is NSTextField {
+            return true
+        }
+        return super.validateProposedFirstResponder(responder, for: event)
+    }
+    
+    // 双击开始编辑指定单元格
+    override func mouseDown(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: localPoint)
+        let clickedColumn = column(at: localPoint)
+        
+        // 先执行默认的选中行为
+        super.mouseDown(with: event)
+        
+        // 如果是双击且启用编辑，开始编辑单元格
+        if event.clickCount == 2 && isEditingEnabled && clickedRow >= 0 && clickedColumn >= 0 {
+            // 延迟一下确保选中状态更新
+            DispatchQueue.main.async { [weak self] in
+                self?.editCell(row: clickedRow, column: clickedColumn)
+            }
+        }
+    }
+    
+    // 编辑指定单元格
+    func editCell(row: Int, column: Int) {
+        guard row >= 0 && column >= 0 && column < tableColumns.count else { return }
+        
+        // 获取单元格视图
+        if let cellView = view(atColumn: column, row: row, makeIfNecessary: false) as? NSTextField {
+            // 选中该行
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            
+            // 开始编辑
+            window?.makeFirstResponder(cellView)
+            
+            // 选中所有文字
+            if let editor = cellView.currentEditor() {
+                editor.selectAll(nil)
+            }
+        }
     }
 }
 

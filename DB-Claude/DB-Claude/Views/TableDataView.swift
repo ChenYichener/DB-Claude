@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - 筛选操作符
 enum FilterOperator: String, CaseIterable {
@@ -92,6 +93,8 @@ struct TableDataView: View {
     @State private var selectedRow: Int? = nil
     @State private var isSaving: Bool = false
     @State private var saveError: String? = nil
+    @State private var showSQLPreview: Bool = false
+    @State private var previewSQLStatements: [String] = []
     
     // 可选的每页数量（从小到大，方便性能调优）
     private let pageSizeOptions = [20, 50, 100, 200]
@@ -160,6 +163,15 @@ struct TableDataView: View {
         }
         .background(AppColors.background)
         .id(table)
+        .sheet(isPresented: $showSQLPreview) {
+            SQLPreviewSheet(
+                sqlStatements: previewSQLStatements,
+                isSaving: isSaving,
+                saveError: saveError,
+                onConfirm: { Task { await executeChanges() } },
+                onCancel: { showSQLPreview = false }
+            )
+        }
         .task(id: table) {
             // 切换表时重置状态
             currentPage = 1
@@ -243,6 +255,21 @@ struct TableDataView: View {
                         pendingEdits = []
                     }
                 }
+            }
+            
+            // 提交更改按钮（有编辑时显示）
+            if !pendingEdits.isEmpty {
+                Button(action: showSQLPreviewSheet) {
+                    HStack(spacing: AppSpacing.xs) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("提交更改 (\(pendingEdits.count))")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(AppColors.warning)
             }
             
             // 刷新按钮
@@ -476,32 +503,30 @@ struct TableDataView: View {
                     .font(.system(size: 14))
                     .foregroundColor(AppColors.warning)
                 
-                Text("\(pendingEdits.count) 个修改待保存")
+                Text("\(pendingEdits.count) 个修改待提交")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColors.primaryText)
             }
             
+            // 修改详情
+            Text("·")
+                .foregroundColor(AppColors.tertiaryText)
+            
+            // 显示修改的列
+            let editedColumns = Set(pendingEdits.map { $0.column })
+            Text("涉及列: \(editedColumns.joined(separator: ", "))")
+                .font(.system(size: 11))
+                .foregroundColor(AppColors.secondaryText)
+                .lineLimit(1)
+            
             Spacer()
             
-            // 错误信息
-            if let error = saveError {
-                HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(AppColors.error)
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(AppColors.error)
-                        .lineLimit(1)
-                }
-            }
-            
-            // 取消按钮
+            // 放弃修改按钮
             Button(action: cancelEdits) {
                 HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "xmark")
+                    Image(systemName: "arrow.uturn.backward")
                         .font(.system(size: 11, weight: .medium))
-                    Text("取消")
+                    Text("放弃修改")
                         .font(.system(size: 12))
                 }
             }
@@ -511,24 +536,6 @@ struct TableDataView: View {
             .padding(.vertical, AppSpacing.sm)
             .background(AppColors.hover)
             .cornerRadius(AppRadius.sm)
-            
-            // 保存按钮
-            Button(action: { Task { await saveChanges() } }) {
-                HStack(spacing: AppSpacing.xs) {
-                    if isSaving {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    Text("保存更改")
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(isSaving)
         }
         .padding(.horizontal, AppSpacing.md)
         .padding(.vertical, AppSpacing.sm)
@@ -564,11 +571,16 @@ struct TableDataView: View {
         Task { await loadData() }
     }
     
-    private func saveChanges() async {
-        guard !pendingEdits.isEmpty else { return }
-        
-        isSaving = true
+    // 显示 SQL 预览弹框
+    private func showSQLPreviewSheet() {
+        previewSQLStatements = generateUpdateSQL()
         saveError = nil
+        showSQLPreview = true
+    }
+    
+    // 生成所有 UPDATE SQL 语句
+    private func generateUpdateSQL() -> [String] {
+        var sqlStatements: [String] = []
         
         // 按行分组编辑
         var editsByRow: [Int: [CellEdit]] = [:]
@@ -576,41 +588,65 @@ struct TableDataView: View {
             editsByRow[edit.row, default: []].append(edit)
         }
         
+        // 获取原始数据（过滤掉 __columns__ 元数据行）
+        let originalResults = results.filter { $0["__columns__"] == nil }
+        let columns = results.first?["__columns__"]?.split(separator: ",").map(String.init) ?? []
+        
+        for (row, edits) in editsByRow.sorted(by: { $0.key < $1.key }) {
+            guard row < originalResults.count else { continue }
+            let originalRow = originalResults[row]
+            
+            // 构建 SET 子句
+            let setClauses = edits.map { edit -> String in
+                if let newValue = edit.newValue {
+                    return "\(edit.column) = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
+                } else {
+                    return "\(edit.column) = NULL"
+                }
+            }
+            
+            // 构建 WHERE 子句（使用所有列值来唯一标识行）
+            var whereClauses: [String] = []
+            for col in columns {
+                if let value = originalRow[col] {
+                    whereClauses.append("\(col) = '\(value.replacingOccurrences(of: "'", with: "''"))'")
+                } else {
+                    whereClauses.append("\(col) IS NULL")
+                }
+            }
+            
+            // 如果没有列信息，使用第一列
+            if whereClauses.isEmpty, let firstCol = columns.first, let firstValue = originalRow[firstCol] {
+                whereClauses.append("\(firstCol) = '\(firstValue.replacingOccurrences(of: "'", with: "''"))'")
+            }
+            
+            let whereClause = whereClauses.isEmpty ? "1=0" : whereClauses.joined(separator: " AND ")
+            let sql = "UPDATE \(table) SET \(setClauses.joined(separator: ", ")) WHERE \(whereClause);"
+            sqlStatements.append(sql)
+        }
+        
+        return sqlStatements
+    }
+    
+    // 执行 SQL 更改
+    private func executeChanges() async {
+        guard !previewSQLStatements.isEmpty else { return }
+        
+        isSaving = true
+        saveError = nil
+        
         do {
-            for (row, edits) in editsByRow {
-                // 构建 UPDATE SQL
-                let setClauses = edits.map { edit -> String in
-                    if let newValue = edit.newValue {
-                        return "\(edit.column) = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
-                    } else {
-                        return "\(edit.column) = NULL"
-                    }
-                }
-                
-                // 使用原始数据的第一列作为 WHERE 条件（假设是主键）
-                // 获取原始数据
-                let originalResults = results.filter { $0["__columns__"] == nil }
-                guard row < originalResults.count else { continue }
-                let originalRow = originalResults[row]
-                
-                // 找第一个非空列作为 WHERE 条件
-                var whereClause = "1=0"
-                if let columns = results.first?["__columns__"]?.split(separator: ",").map(String.init),
-                   let firstCol = columns.first,
-                   let firstValue = originalRow[firstCol] {
-                    whereClause = "\(firstCol) = '\(firstValue.replacingOccurrences(of: "'", with: "''"))'"
-                }
-                
-                let sql = "UPDATE \(table) SET \(setClauses.joined(separator: ", ")) WHERE \(whereClause)"
+            for sql in previewSQLStatements {
                 print("[执行 SQL] \(sql)")
-                
                 _ = try await driver.execute(sql: sql)
             }
             
             // 保存成功，清空编辑并刷新数据
             await MainActor.run {
                 pendingEdits = []
+                previewSQLStatements = []
                 isSaving = false
+                showSQLPreview = false
             }
             await loadData()
             
@@ -885,6 +921,191 @@ struct FilterRowView: View {
         table: "users",
         driver: MockDriver()
     )
+}
+
+// MARK: - SQL 预览弹框
+struct SQLPreviewSheet: View {
+    let sqlStatements: [String]
+    let isSaving: Bool
+    let saveError: String?
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    
+    @State private var copiedIndex: Int? = nil
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 16))
+                    .foregroundColor(AppColors.accent)
+                
+                Text("确认 SQL 更改")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(AppColors.primaryText)
+                
+                Spacer()
+                
+                Text("\(sqlStatements.count) 条语句")
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.secondaryText)
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.vertical, AppSpacing.xxs)
+                    .background(AppColors.tertiaryBackground)
+                    .cornerRadius(AppRadius.sm)
+            }
+            .padding(AppSpacing.md)
+            .background(AppColors.secondaryBackground)
+            
+            Divider()
+            
+            // SQL 语句列表
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.sm) {
+                    ForEach(Array(sqlStatements.enumerated()), id: \.offset) { index, sql in
+                        SQLStatementRow(
+                            index: index + 1,
+                            sql: sql,
+                            isCopied: copiedIndex == index,
+                            onCopy: {
+                                copyToClipboard(sql)
+                                copiedIndex = index
+                                // 2秒后重置复制状态
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    if copiedIndex == index {
+                                        copiedIndex = nil
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+                .padding(AppSpacing.md)
+            }
+            .frame(minHeight: 200, maxHeight: 400)
+            .background(AppColors.background)
+            
+            Divider()
+            
+            // 错误信息
+            if let error = saveError {
+                HStack(spacing: AppSpacing.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.error)
+                    
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.error)
+                        .lineLimit(2)
+                    
+                    Spacer()
+                }
+                .padding(AppSpacing.md)
+                .background(AppColors.error.opacity(0.1))
+            }
+            
+            // 底部操作栏
+            HStack(spacing: AppSpacing.md) {
+                // 警告提示
+                HStack(spacing: AppSpacing.xs) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.warning)
+                    Text("执行后将直接修改数据库")
+                        .font(.system(size: 11))
+                        .foregroundColor(AppColors.secondaryText)
+                }
+                
+                Spacer()
+                
+                // 取消按钮
+                Button(action: onCancel) {
+                    Text("取消")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(AppColors.secondaryText)
+                .padding(.horizontal, AppSpacing.lg)
+                .padding(.vertical, AppSpacing.sm)
+                .background(AppColors.hover)
+                .cornerRadius(AppRadius.md)
+                .disabled(isSaving)
+                
+                // 确认按钮
+                Button(action: onConfirm) {
+                    HStack(spacing: AppSpacing.xs) {
+                        if isSaving {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                        }
+                        Text(isSaving ? "执行中..." : "确认执行")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSaving)
+            }
+            .padding(AppSpacing.md)
+            .background(AppColors.secondaryBackground)
+        }
+        .frame(width: 600)
+        .background(AppColors.background)
+        .clipShape(RoundedRectangle(cornerRadius: AppRadius.lg))
+    }
+    
+    private func copyToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+}
+
+// MARK: - SQL 语句行
+struct SQLStatementRow: View {
+    let index: Int
+    let sql: String
+    let isCopied: Bool
+    let onCopy: () -> Void
+    
+    @State private var isHovering: Bool = false
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: AppSpacing.sm) {
+            // 序号
+            Text("\(index)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(AppColors.tertiaryText)
+                .frame(width: 24, alignment: .trailing)
+            
+            // SQL 语句
+            Text(sql)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(AppColors.primaryText)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            // 复制按钮
+            Button(action: onCopy) {
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11))
+                    .foregroundColor(isCopied ? AppColors.success : AppColors.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovering || isCopied ? 1 : 0.5)
+            .help(isCopied ? "已复制" : "复制 SQL")
+        }
+        .padding(AppSpacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: AppRadius.sm)
+                .fill(isHovering ? AppColors.hover : AppColors.tertiaryBackground)
+        )
+        .onHover { isHovering = $0 }
+    }
 }
 
 // Mock driver for preview

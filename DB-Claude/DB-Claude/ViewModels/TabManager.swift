@@ -5,6 +5,16 @@ enum TabType: Equatable {
     case query
     case structure(String) // 显示 DDL
     case data(String)      // 显示表数据
+    
+    var isQuery: Bool {
+        if case .query = self { return true }
+        return false
+    }
+    
+    var isData: Bool {
+        if case .data = self { return true }
+        return false
+    }
 }
 
 struct WorkspaceTab: Identifiable, Equatable {
@@ -12,12 +22,22 @@ struct WorkspaceTab: Identifiable, Equatable {
     var title: String
     var type: TabType
     var connectionId: UUID // Tab belongs to a connection context? Or Global? usually connection context.
+    var isRenamable: Bool { type.isQuery }  // 只有查询 tab 可以重命名
 }
 
 @Observable
 class TabManager {
     var tabs: [WorkspaceTab] = []
     var activeTabId: UUID?
+    
+    // 按类型分组的 tabs
+    var dataTabs: [WorkspaceTab] {
+        tabs.filter { $0.type.isData || !$0.type.isQuery }
+    }
+    
+    var queryTabs: [WorkspaceTab] {
+        tabs.filter { $0.type.isQuery }
+    }
     
     // Helper to generate default title
     private func defaultTitle(for type: TabType, count: Int) -> String {
@@ -99,5 +119,12 @@ class TabManager {
                 activeTabId = tabs[newIndex].id
             }
         }
+    }
+    
+    /// 重命名 tab（仅支持查询 tab）
+    func renameTab(id: UUID, newTitle: String) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }),
+              tabs[index].isRenamable else { return }
+        tabs[index].title = newTitle
     }
 }

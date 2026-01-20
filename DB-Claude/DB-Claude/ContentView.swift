@@ -168,26 +168,36 @@ struct ContentView: View {
             }
         } detail: {
             VStack(spacing: 0) {
-                // Custom Tab Bar
+                // 双行 Tab Bar
                 if !tabManager.tabs.isEmpty {
-                    HStack(spacing: AppSpacing.xs) {
-                        ForEach(tabManager.tabs) { tab in
-                            TabItemView(
-                                tab: tab,
-                                isActive: tabManager.activeTabId == tab.id,
-                                iconName: iconName(for: tab.type),
-                                onSelect: {
-                                    tabManager.activeTabId = tab.id
-                                },
-                                onClose: {
-                                    tabManager.closeTab(id: tab.id)
-                                }
+                    VStack(spacing: 0) {
+                        // 第一行：数据表 tabs
+                        if !tabManager.dataTabs.isEmpty {
+                            TabBarRow(
+                                tabs: tabManager.dataTabs,
+                                activeTabId: tabManager.activeTabId,
+                                tabManager: tabManager,
+                                iconName: iconName,
+                                label: "数据表"
                             )
                         }
-                        Spacer()
+                        
+                        // 第二行：查询 tabs
+                        TabBarRow(
+                            tabs: tabManager.queryTabs,
+                            activeTabId: tabManager.activeTabId,
+                            tabManager: tabManager,
+                            iconName: iconName,
+                            label: "查询",
+                            showAddButton: true,
+                            onAddTab: {
+                                if let sel = selection {
+                                    let conn = extractConnection(from: sel)
+                                    tabManager.addQueryTab(connectionId: conn.id)
+                                }
+                            }
+                        )
                     }
-                    .padding(.horizontal, AppSpacing.md)
-                    .padding(.vertical, AppSpacing.sm)
                     .background(AppColors.background)
                     
                     Divider()
@@ -225,6 +235,7 @@ struct ContentView: View {
                 DDLInspectorView(tableName: table, ddl: content)
             }
         }
+        .inspectorColumnWidth(min: 250, ideal: 350, max: 600)
     }
     
     private func iconName(for type: TabType) -> String {
@@ -450,16 +461,84 @@ struct DataTabView: View {
     }
 }
 
-// Tab 项视图 - 扁平化设计
+// MARK: - Tab Bar 行视图
+struct TabBarRow: View {
+    let tabs: [WorkspaceTab]
+    let activeTabId: UUID?
+    let tabManager: TabManager
+    let iconName: (TabType) -> String
+    var label: String = ""
+    var showAddButton: Bool = false
+    var onAddTab: (() -> Void)?
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            // 行标签
+            if !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(AppColors.tertiaryText)
+                    .frame(width: 40)
+                    .padding(.leading, AppSpacing.sm)
+            }
+            
+            // 滚动的 tabs
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: AppSpacing.xs) {
+                    ForEach(tabs) { tab in
+                        TabItemView(
+                            tab: tab,
+                            isActive: activeTabId == tab.id,
+                            iconName: iconName(tab.type),
+                            onSelect: {
+                                tabManager.activeTabId = tab.id
+                            },
+                            onClose: {
+                                tabManager.closeTab(id: tab.id)
+                            },
+                            onRename: tab.isRenamable ? { newName in
+                                tabManager.renameTab(id: tab.id, newTitle: newName)
+                            } : nil
+                        )
+                    }
+                }
+                .padding(.horizontal, AppSpacing.sm)
+            }
+            
+            // 添加按钮
+            if showAddButton {
+                Button {
+                    onAddTab?()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(AppColors.secondaryText)
+                        .frame(width: 24, height: 24)
+                        .background(AppColors.hover)
+                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, AppSpacing.sm)
+            }
+        }
+        .frame(height: 32)
+        .background(AppColors.secondaryBackground.opacity(0.5))
+    }
+}
+
+// Tab 项视图 - 扁平化设计，支持重命名
 struct TabItemView: View {
     let tab: WorkspaceTab
     let isActive: Bool
     let iconName: String
     let onSelect: () -> Void
     let onClose: () -> Void
+    var onRename: ((String) -> Void)?
     
     @State private var isHovering = false
     @State private var isCloseHovering = false
+    @State private var isEditing = false
+    @State private var editingTitle = ""
     
     var body: some View {
         HStack(spacing: 0) {
@@ -467,16 +546,40 @@ struct TabItemView: View {
             HStack(spacing: AppSpacing.xs) {
                 Image(systemName: iconName)
                     .font(.system(size: 11, weight: .medium))
-                Text(tab.title)
-                    .font(.system(size: 12, weight: isActive ? .medium : .regular))
-                    .lineLimit(1)
+                
+                if isEditing {
+                    TextField("", text: $editingTitle, onCommit: {
+                        if !editingTitle.isEmpty {
+                            onRename?(editingTitle)
+                        }
+                        isEditing = false
+                    })
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(minWidth: 60, maxWidth: 120)
+                    .onExitCommand {
+                        isEditing = false
+                    }
+                } else {
+                    Text(tab.title)
+                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                        .lineLimit(1)
+                }
             }
             .padding(.vertical, AppSpacing.sm)
             .padding(.leading, AppSpacing.md)
             .padding(.trailing, AppSpacing.xs)
             .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                if onRename != nil {
+                    editingTitle = tab.title
+                    isEditing = true
+                }
+            }
             .onTapGesture {
-                onSelect()
+                if !isEditing {
+                    onSelect()
+                }
             }
             
             // 独立的关闭按钮区域
