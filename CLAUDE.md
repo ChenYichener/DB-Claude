@@ -206,6 +206,31 @@ enum DatabaseError: Error {
 
 所有数据库错误必须抛出 `DatabaseError`，在 UI 层转换为用户友好的错误消息。
 
+## SwiftUI 开发陷阱
+
+开发过程中遇到的 SwiftUI 问题及解决方案，详见 `/docs/swiftui-scrollview-pitfall.md`。
+
+### ScrollView 事件传递问题
+
+**问题**：`ScrollView` 内部的子视图可能无法接收 `onHover` 和点击事件，即使视图已正确渲染。
+
+**解决方案**：
+- 如果内容数量有限，**不要使用 ScrollView**，直接用 HStack/VStack
+- 将不同场景的组件独立实现，避免复用导致的布局差异
+
+```swift
+// ❌ 避免：预防性使用 ScrollView
+ScrollView(.horizontal) {
+    HStack { ForEach(items) { ... } }
+}
+
+// ✅ 推荐：直接使用 HStack
+HStack {
+    ForEach(items) { ... }
+    Spacer()
+}
+```
+
 ## 已知限制
 
 1. **MySQL 驱动**：当前为占位符实现，返回假数据

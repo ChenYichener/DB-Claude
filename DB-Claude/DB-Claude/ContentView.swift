@@ -173,23 +173,15 @@ struct ContentView: View {
                     // 双行 Tab Bar
                     if !tabManager.tabs.isEmpty {
                         VStack(spacing: 0) {
-                            // 第一行：数据表 tabs
+                            // 第一行：数据表 tabs（独立实现）
                             if !tabManager.dataTabs.isEmpty {
-                                TabBarRow(
-                                    tabManager: tabManager,
-                                    tabType: .data,
-                                    iconName: iconName,
-                                    label: "数据表"
-                                )
+                                DataTabBar(tabManager: tabManager, iconName: iconName)
                             }
 
-                            // 第二行：查询 tabs
-                            TabBarRow(
+                            // 第二行：查询 tabs（独立实现）
+                            QueryTabBar(
                                 tabManager: tabManager,
-                                tabType: .query,
                                 iconName: iconName,
-                                label: "查询",
-                                showAddButton: true,
                                 onAddTab: {
                                     if let sel = selection {
                                         let conn = extractConnection(from: sel)
@@ -243,30 +235,14 @@ struct ContentView: View {
                 }
             }
         }
-        // MARK: - 快捷键：Command+数字切换查询标签页
+        // MARK: - 快捷键：Command+数字切换查询标签页 (1-9)
         .background(
-            Group {
-                // Command+1 切换到第1个查询标签页
-                Button(action: { switchToQueryTab(index: 0) }) { EmptyView() }
-                    .keyboardShortcut("1", modifiers: .command)
-                
-                // Command+2 切换到第2个查询标签页
-                Button(action: { switchToQueryTab(index: 1) }) { EmptyView() }
-                    .keyboardShortcut("2", modifiers: .command)
-                
-                // Command+3 切换到第3个查询标签页
-                Button(action: { switchToQueryTab(index: 2) }) { EmptyView() }
-                    .keyboardShortcut("3", modifiers: .command)
-                
-                // Command+4 切换到第4个查询标签页
-                Button(action: { switchToQueryTab(index: 3) }) { EmptyView() }
-                    .keyboardShortcut("4", modifiers: .command)
-                
-                // Command+5 切换到第5个查询标签页
-                Button(action: { switchToQueryTab(index: 4) }) { EmptyView() }
-                    .keyboardShortcut("5", modifiers: .command)
+            ForEach(0..<9, id: \.self) { index in
+                Button(action: { switchToQueryTab(index: index) }) { EmptyView() }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
             }
             .opacity(0)
+            .allowsHitTesting(false) // 确保不会拦截点击事件
         )
     }
     
@@ -511,42 +487,66 @@ struct DataTabView: View {
     }
 }
 
-// MARK: - Tab Bar 行视图
-struct TabBarRow: View {
+// MARK: - 数据表 Tab Bar（独立实现）
+struct DataTabBar: View {
     @Bindable var tabManager: TabManager
-    let tabType: TabRowType
     let iconName: (TabType) -> String
-    var label: String = ""
-    var showAddButton: Bool = false
-    var onAddTab: (() -> Void)?
-
-    enum TabRowType {
-        case data
-        case query
-    }
-
-    private var tabs: [WorkspaceTab] {
-        switch tabType {
-        case .data: return tabManager.dataTabs
-        case .query: return tabManager.queryTabs
-        }
-    }
-
+    
     var body: some View {
         HStack(spacing: AppSpacing.sm) {
             // 行标签
-            if !label.isEmpty {
-                Text(label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(AppColors.tertiaryText)
-                    .frame(width: 40)
-                    .padding(.leading, AppSpacing.sm)
+            Text("数据表")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(AppColors.tertiaryText)
+                .frame(width: 40)
+                .padding(.leading, AppSpacing.sm)
+            
+            // Tab 列表 - 不使用 ScrollView，避免事件传递问题
+            HStack(spacing: AppSpacing.sm) {
+                ForEach(tabManager.dataTabs) { tab in
+                    TabItemView(
+                        tab: tab,
+                        isActive: tabManager.activeTabId == tab.id,
+                        iconName: iconName(tab.type),
+                        onSelect: {
+                            tabManager.activeTabId = tab.id
+                        },
+                        onClose: {
+                            tabManager.closeTab(id: tab.id)
+                        },
+                        onRename: nil
+                    )
+                }
             }
+            .padding(.horizontal, AppSpacing.md)
+            .padding(.vertical, AppSpacing.xs)
+            
+            Spacer()
+        }
+        .frame(height: 36)
+        .background(.ultraThinMaterial)
+    }
+}
 
-            // 滚动的 tabs
+// MARK: - 查询 Tab Bar（独立实现）
+struct QueryTabBar: View {
+    @Bindable var tabManager: TabManager
+    let iconName: (TabType) -> String
+    var onAddTab: (() -> Void)?
+    
+    var body: some View {
+        HStack(spacing: AppSpacing.sm) {
+            // 行标签
+            Text("查询")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(AppColors.tertiaryText)
+                .frame(width: 40)
+                .padding(.leading, AppSpacing.sm)
+            
+            // Tab 列表
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: AppSpacing.sm) {
-                    ForEach(tabs) { tab in
+                    ForEach(tabManager.queryTabs) { tab in
                         TabItemView(
                             tab: tab,
                             isActive: tabManager.activeTabId == tab.id,
@@ -566,27 +566,25 @@ struct TabBarRow: View {
                 .padding(.horizontal, AppSpacing.md)
                 .padding(.vertical, AppSpacing.xs)
             }
-
+            
             // 添加按钮
-            if showAddButton {
-                Button {
-                    onAddTab?()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(AppColors.secondaryText)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(AppIconButtonStyle(size: 24))
-                .padding(.trailing, AppSpacing.sm)
+            Button {
+                onAddTab?()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(AppColors.secondaryText)
+                    .frame(width: 24, height: 24)
             }
+            .buttonStyle(AppIconButtonStyle(size: 24))
+            .padding(.trailing, AppSpacing.sm)
         }
         .frame(height: 36)
-        .background(.ultraThinMaterial)  // 毛玻璃效果
+        .background(.ultraThinMaterial)
     }
 }
 
-// Tab 项视图 - 扁平化设计，支持重命名
+// MARK: - Tab 项视图
 struct TabItemView: View {
     let tab: WorkspaceTab
     let isActive: Bool
@@ -601,43 +599,53 @@ struct TabItemView: View {
     @State private var editingTitle = ""
 
     var body: some View {
-        HStack(spacing: AppSpacing.xs) {
-            Image(systemName: iconName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isActive ? .white : AppColors.secondaryText)
-
-            if isEditing {
-                TextField("", text: $editingTitle, onCommit: {
-                    if !editingTitle.isEmpty {
-                        onRename?(editingTitle)
-                    }
-                    isEditing = false
-                })
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .frame(minWidth: 50, maxWidth: 100)
-                .onExitCommand {
-                    isEditing = false
-                }
-            } else {
-                Text(tab.title)
-                    .font(.system(size: 12, weight: isActive ? .medium : .regular))
-                    .lineLimit(1)
+        // 主体内容（图标+标题）- 使用 Button 处理点击
+        Button(action: {
+            if !isEditing {
+                onSelect()
             }
+        }) {
+            HStack(spacing: AppSpacing.xs) {
+                Image(systemName: iconName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isActive ? .white : AppColors.secondaryText)
 
-            Spacer(minLength: 20)  // 为关闭按钮留出空间
+                if isEditing {
+                    TextField("", text: $editingTitle, onCommit: {
+                        if !editingTitle.isEmpty {
+                            onRename?(editingTitle)
+                        }
+                        isEditing = false
+                    })
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .frame(minWidth: 50, maxWidth: 100)
+                    .onExitCommand {
+                        isEditing = false
+                    }
+                } else {
+                    Text(tab.title)
+                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                        .lineLimit(1)
+                }
+
+                // 占位空间给关闭按钮
+                Color.clear.frame(width: 20, height: 16)
+            }
+            .padding(.vertical, AppSpacing.xs)
+            .padding(.horizontal, AppSpacing.sm)
+            .background(tabBackground)
+            .foregroundColor(isActive ? .white : AppColors.primaryText)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(isActive ? Color.clear : AppColors.border.opacity(0.5), lineWidth: 1)
+            )
+            .contentShape(Capsule())
         }
-        .padding(.vertical, AppSpacing.xs)
-        .padding(.horizontal, AppSpacing.sm)
-        .background(tabBackground)
-        .foregroundColor(isActive ? .white : AppColors.primaryText)
-        .clipShape(Capsule())
-        .overlay(
-            Capsule()
-                .stroke(isActive ? Color.clear : AppColors.border.opacity(0.5), lineWidth: 1)
-        )
+        .buttonStyle(.borderless) // macOS 上 borderless 在 ScrollView 中响应更好
+        // 关闭按钮使用 overlay 避免嵌套 Button
         .overlay(alignment: .trailing) {
-            // 关闭按钮 - 使用 overlay 叠加，不参与布局
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .semibold))
@@ -648,8 +656,9 @@ struct TabItemView: View {
                             .fill(isCloseHovering ? closeHoverBackground : Color.clear)
                     )
                     .scaleEffect(isCloseHovering ? 1.1 : 1.0)
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .animation(AppAnimation.bouncy, value: isCloseHovering)
             .onHover { isCloseHovering = $0 }
             .padding(.trailing, AppSpacing.sm)
@@ -659,11 +668,6 @@ struct TabItemView: View {
         .animation(AppAnimation.medium, value: isActive)
         .shadow(color: isActive ? AppColors.accent.opacity(0.3) : Color.clear, radius: 8, y: 2)
         .onHover { isHovering = $0 }
-        .onTapGesture {
-            if !isEditing {
-                onSelect()
-            }
-        }
         .contextMenu {
             if onRename != nil {
                 Button(action: {
