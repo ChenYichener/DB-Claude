@@ -1,96 +1,152 @@
-# DB-Claude
+<p align="center">
+  <img src="docs/assets/logo.png" alt="DB-Claude Logo" width="128" height="128">
+</p>
 
-一款原生 macOS 数据库管理工具，采用 Swift 和 SwiftUI 构建。专为中文用户优化，提供流畅的数据库开发体验。
+<h1 align="center">DB-Claude</h1>
 
-## 核心特性
+<p align="center">
+  <strong>A native macOS database management tool built with Swift and SwiftUI</strong>
+</p>
 
-### 🎯 智能 SQL 编辑器
+<p align="center">
+  <a href="./README.md">English</a> | <a href="./README_CN.md">简体中文</a>
+</p>
 
-- **中文标点自动转换**：输入中文标点（，。；：""''（）等）时自动转换为英文标点，再也不用担心 SQL 语法错误
-- **SQL 语法高亮**：关键字、函数、字符串、数字、注释等分颜色显示，代码更清晰
-- **智能自动补全**：输入时自动提示 SQL 关键字、内置函数、表名和字段名
-- **关键字自动大写**：输入 `select` 自动变成 `SELECT`，保持代码风格统一
-- **SQL 格式化**：一键美化 SQL 语句，自动添加换行和缩进
-- **实时语法验证**：编写时即时检测语法错误并给出修复建议
-- **选中执行**：选中部分 SQL 单独执行，调试更方便
-- **EXPLAIN 查询**：一键查看 SQL 执行计划，优化查询性能
-- **字体大小调节**：根据个人喜好调整编辑器字体大小
-- **右键菜单**：执行、格式化、复制为带转义的字符串等快捷操作
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS%2015.7+-blue.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/swift-5.0-orange.svg" alt="Swift">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/dependencies-zero-brightgreen.svg" alt="Dependencies">
+</p>
 
-### 📊 表数据浏览器
+---
 
-- **分页加载**：支持 20/50/100/200 条每页，大表也能流畅浏览
-- **点击排序**：点击列标题一键排序（升序/降序）
-- **条件筛选**：支持等于、不等于、大于、小于、LIKE、IS NULL 等多种筛选条件
-- **可视化编辑**：直接编辑单元格内容，预览生成的 SQL 后再执行，安全可控
+## Features
 
-### 🗄️ 多数据库支持
+### 🎯 Smart SQL Editor
 
-- **SQLite**：完整支持，开箱即用
-- **MySQL**：开发中
-- **PostgreSQL**：规划中
+- **Chinese Punctuation Auto-Convert** - Automatically converts Chinese punctuation (，。；：""'' etc.) to English equivalents, preventing SQL syntax errors
+- **Syntax Highlighting** - Color-coded keywords, functions, strings, numbers, and comments for better readability
+- **Intelligent Auto-Complete** - Auto-suggests SQL keywords, built-in functions, table names, and column names
+- **Auto-Uppercase Keywords** - Typing `select` automatically becomes `SELECT` for consistent code style
+- **SQL Formatting** - One-click beautification with proper line breaks and indentation
+- **Real-time Validation** - Instant syntax error detection with fix suggestions
+- **Execute Selection** - Run selected SQL portions independently for easier debugging
+- **EXPLAIN Query** - One-click execution plan analysis for query optimization
+- **Adjustable Font Size** - Customize editor font size to your preference
+- **Context Menu** - Quick actions: execute, format, copy as escaped string
 
-### 💻 原生体验
+### 📊 Table Data Browser
 
-- **零第三方依赖**：纯系统框架实现，体积小、性能高
-- **现代化 UI**：基于 SwiftUI 的三栏布局设计，符合 macOS 设计规范
-- **多标签页**：同时打开多个查询和表结构标签页
-- **查询历史**：自动记录执行过的 SQL 语句，随时回溯
+- **Pagination** - Support for 20/50/100/200 rows per page, smooth browsing for large tables
+- **Click-to-Sort** - Click column headers to sort (ascending/descending)
+- **Filter Conditions** - Multiple operators: equals, not equals, greater than, less than, LIKE, IS NULL, etc.
+- **Visual Editing** - Edit cell content directly, preview generated SQL before execution
 
-## 快捷键
+### 🗄️ Multi-Database Support
 
-| 功能 | 快捷键 |
-|------|--------|
-| 执行 SQL | `⌘ + Enter` |
-| 格式化 SQL | `⌘ + Shift + F` |
-| 自动补全 | `Tab` |
-| 取消补全 | `Esc` |
+| Database | Status |
+|----------|--------|
+| SQLite | ✅ Full Support |
+| MySQL | 🚧 In Development |
+| PostgreSQL | 📋 Planned |
 
-## 技术栈
+### 💻 Native Experience
 
-- **语言**：Swift 5.0
-- **UI 框架**：SwiftUI
-- **数据持久化**：SwiftData
-- **最低部署目标**：macOS 15.7
+- **Zero Dependencies** - Pure system frameworks, small footprint, high performance
+- **Modern UI** - SwiftUI-based three-column layout following macOS design guidelines
+- **Multi-Tab** - Open multiple query and table structure tabs simultaneously
+- **Query History** - Automatic SQL statement logging for easy recall
 
-## 截图
+## Keyboard Shortcuts
 
-*待添加*
+| Action | Shortcut |
+|--------|----------|
+| Execute SQL | `⌘ + Enter` |
+| Format SQL | `⌘ + Shift + F` |
+| Auto-Complete | `Tab` |
+| Cancel Completion | `Esc` |
 
-## 开发
+## Tech Stack
 
-### 环境要求
+| Component | Technology |
+|-----------|------------|
+| Language | Swift 5.0 |
+| UI Framework | SwiftUI |
+| Data Persistence | SwiftData |
+| Minimum Target | macOS 15.7 |
+
+## Screenshots
+
+*Coming soon*
+
+## Getting Started
+
+### Requirements
 
 - macOS 15.7+
 - Xcode 16.0+
 
-### 构建
+### Build
 
 ```bash
-# 命令行构建
+# Command line build
 xcodebuild -project DB-Claude.xcodeproj -scheme DB-Claude -configuration Debug build
 
-# 或直接在 Xcode 中打开
+# Or open in Xcode
 open DB-Claude.xcodeproj
 ```
 
-## 架构
+## Architecture
 
-项目采用 MVVM 分层架构：
+The project follows MVVM layered architecture:
 
 ```
-Views (SwiftUI) → ViewModels (@Observable) → Models (@Model) → Services/Drivers
+┌─────────────────────────────────────────────────────────────┐
+│                    Views (SwiftUI)                          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │ Sidebar  │ │  Query   │ │ Results  │ │ History  │       │
+│  │  View    │ │  Editor  │ │   Grid   │ │Inspector │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│              ViewModels (@Observable)                        │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  TabManager: Manages workspace tabs and selection     │   │
+│  └──────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Models (@Model)                           │
+│  ┌──────────────────────┐ ┌──────────────────────────┐      │
+│  │     Connection       │ │      QueryHistory        │      │
+│  │  SwiftData Persisted │ │   sql, timestamp, etc.   │      │
+│  └──────────────────────┘ └──────────────────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   Drivers (Protocol)                         │
+│  ┌──────────────────────┐ ┌──────────────────────────┐      │
+│  │    SQLiteDriver      │ │      MySQLDriver         │      │
+│  │   SQLite3 C API      │ │    In Development        │      │
+│  └──────────────────────┘ └──────────────────────────┘      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-详细架构说明请参考 [CLAUDE.md](./CLAUDE.md)。
+For detailed architecture documentation, see [CLAUDE.md](./CLAUDE.md).
 
-## 开发路线图
+## Roadmap
 
-- [x] 阶段一：UI 骨架、连接管理、SQLite 驱动
-- [x] 阶段二：多标签页、SQL 编辑器、结果网格
-- [x] 阶段三：历史记录、快捷键
-- [ ] 阶段四：AI 智能体集成、NL2SQL
+- [x] Phase 1: UI skeleton, connection management, SQLite driver
+- [x] Phase 2: Multi-tab, SQL editor, results grid
+- [x] Phase 3: Query history, keyboard shortcuts
+- [ ] Phase 4: AI agent integration, NL2SQL
 
-## 许可证
+## Contributing
 
-MIT License
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
