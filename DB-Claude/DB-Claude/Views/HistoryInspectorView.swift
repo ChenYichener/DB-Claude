@@ -17,29 +17,19 @@ struct HistoryInspectorView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏
-            HStack {
-                Text("历史记录")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AppColors.primaryText)
-                
-                Spacer()
-                
-                Text("\(filteredHistory.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppColors.secondaryText)
-                    .padding(.horizontal, AppSpacing.sm)
-                    .padding(.vertical, AppSpacing.xxs)
-                    .background(AppColors.tertiaryBackground)
-                    .clipShape(Capsule())
+            // 标题栏 - 使用 AppToolbar
+            AppToolbar(title: "历史记录") {
+                EmptyView()
+            } trailing: {
+                AppBadge(count: filteredHistory.count)
             }
-            .padding(.horizontal, AppSpacing.md)
-            .padding(.vertical, AppSpacing.sm)
-            .background(AppColors.secondaryBackground)
             
             // 列表
             if filteredHistory.isEmpty {
-                emptyState
+                AppEmptyState(
+                    icon: "clock",
+                    title: "暂无历史记录"
+                )
             } else {
                 ScrollView {
                     LazyVStack(spacing: AppSpacing.xs) {
@@ -65,22 +55,9 @@ struct HistoryInspectorView: View {
         }
         .background(AppColors.background)
     }
-    
-    private var emptyState: some View {
-        VStack(spacing: AppSpacing.md) {
-            Image(systemName: "clock")
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(AppColors.tertiaryText)
-            
-            Text("暂无历史记录")
-                .font(.system(size: 13))
-                .foregroundColor(AppColors.secondaryText)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
-// MARK: - 历史记录项行 - 扁平化设计
+// MARK: - 历史记录项行
 private struct HistoryItemRow: View {
     let item: QueryHistory
     let onTap: () -> Void
@@ -126,7 +103,7 @@ private struct HistoryItemRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppRadius.md)
-                .stroke(AppColors.border, lineWidth: 1)
+                .stroke(AppColors.border, lineWidth: 0.5)
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }

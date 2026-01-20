@@ -95,7 +95,7 @@ struct EditableResultsGridView: NSViewRepresentable {
         scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = NSColor.controlBackgroundColor
+        scrollView.backgroundColor = NSColor.windowBackgroundColor
         
         let tableView = EditableTableView()
         tableView.style = .plain
@@ -105,8 +105,8 @@ struct EditableResultsGridView: NSViewRepresentable {
         tableView.rowHeight = 24
         tableView.intercellSpacing = NSSize(width: 1, height: 1)
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.2)
-        tableView.backgroundColor = NSColor.controlBackgroundColor
+        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.15)
+        tableView.backgroundColor = NSColor.windowBackgroundColor
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         
@@ -225,7 +225,7 @@ struct EditableResultsGridView: NSViewRepresentable {
     }
     
     // MARK: - Coordinator
-    class Coordinator: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate {
+    class Coordinator: NSObject, NSTableViewDelegate, NSTableViewDataSource {
         var columns: [String]
         var rowData: [[String?]]
         var dataHash: Int
@@ -286,75 +286,86 @@ struct EditableResultsGridView: NSViewRepresentable {
             let columnName = tableColumn.identifier.rawValue
             guard let columnIndex = columnIndexMap[columnName] else { return nil }
             
-            let cellId = NSUserInterfaceItemIdentifier("EditCell_\(columnIndex)")
+            let cellId = NSUserInterfaceItemIdentifier("EditableCell_\(columnName)")
             
-            let cellView: NSTextField
-            if let reusedCell = tableView.makeView(withIdentifier: cellId, owner: nil) as? NSTextField {
+            // 使用 NSTableCellView 作为容器（这是 AppKit 的标准做法）
+            let cellView: NSTableCellView
+            let textField: NSTextField
+            
+            if let reusedCell = tableView.makeView(withIdentifier: cellId, owner: self) as? NSTableCellView,
+               let existingTextField = reusedCell.textField {
                 cellView = reusedCell
+                textField = existingTextField
             } else {
-                cellView = NSTextField()
+                // 创建新的 NSTableCellView
+                cellView = NSTableCellView()
                 cellView.identifier = cellId
-                cellView.lineBreakMode = .byTruncatingTail
-                cellView.cell?.truncatesLastVisibleLine = true
-                cellView.drawsBackground = false
-                cellView.isBordered = false
-                cellView.focusRingType = .default  // 编辑时显示焦点环
-                cellView.delegate = self
+                
+                // 创建 NSTextField
+                textField = NSTextField()
+                textField.isBezeled = false
+                textField.drawsBackground = false
+                textField.lineBreakMode = .byTruncatingTail
+                textField.cell?.truncatesLastVisibleLine = true
+                textField.focusRingType = .exterior
+                
+                // 设置 target/action 来处理编辑完成事件
+                textField.target = self
+                textField.action = #selector(textFieldDidEndEditing(_:))
+                
+                // 添加到 cellView 并设置约束
+                cellView.addSubview(textField)
+                cellView.textField = textField
+                
+                textField.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                    textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                    textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
+                ])
             }
             
-            // 设置是否可编辑和可选择（两者都需要为 true 才能正常编辑）
-            cellView.isEditable = isEditable
-            cellView.isSelectable = isEditable
+            // 设置是否可编辑和可选择
+            textField.isEditable = isEditable
+            textField.isSelectable = true
             
             // 检查是否有编辑过的值
             let editKey = "\(row)_\(columnIndex)"
             let value: String?
             if let editedValue = editedCells[editKey] {
                 value = editedValue
-                cellView.textColor = editedColor  // 已编辑的单元格用橙色
+                textField.textColor = editedColor  // 已编辑的单元格用橙色
             } else {
                 value = rowData[row][columnIndex]
-                cellView.textColor = value == nil ? nullColor : normalColor
+                textField.textColor = value == nil ? nullColor : normalColor
             }
             
             if let value = value {
-                cellView.stringValue = value
-                cellView.font = normalFont
+                textField.stringValue = value
+                textField.font = normalFont
             } else {
-                cellView.stringValue = "NULL"
-                cellView.font = nullFont
+                textField.stringValue = "NULL"
+                textField.font = nullFont
             }
             
-            // 存储行列信息
-            cellView.tag = row
-            cellView.cell?.representedObject = columnName
+            // 存储行列信息用于编辑回调
+            textField.tag = row
+            // 使用 cell 的 representedObject 存储列名
+            textField.cell?.representedObject = columnName
             
             return cellView
         }
         
-        // 选中行变化
-        func tableViewSelectionDidChange(_ notification: Notification) {
-            guard let tableView = notification.object as? NSTableView else { return }
-            let selectedRow = tableView.selectedRow
-            onRowSelect?(selectedRow >= 0 ? selectedRow : nil)
-        }
-        
-        // 排序变化
-        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-            guard let sortDescriptor = tableView.sortDescriptors.first,
-                  let key = sortDescriptor.key else { return }
-            onSort?(key)
-        }
-        
-        // MARK: - NSTextFieldDelegate（编辑完成）
-        func controlTextDidEndEditing(_ obj: Notification) {
-            guard let textField = obj.object as? NSTextField,
-                  let columnName = textField.cell?.representedObject as? String,
+        // 编辑完成时的回调（通过 target/action 触发）
+        @objc func textFieldDidEndEditing(_ sender: NSTextField) {
+            guard let columnName = sender.cell?.representedObject as? String,
                   let columnIndex = columnIndexMap[columnName] else { return }
             
-            let row = textField.tag
+            let row = sender.tag
+            guard row >= 0 && row < rowData.count else { return }
+            
             let oldValue = rowData[row][columnIndex]
-            var newValue: String? = textField.stringValue
+            var newValue: String? = sender.stringValue
             
             // 如果输入 "NULL" 或空字符串，视为 NULL
             if newValue == "NULL" || newValue?.isEmpty == true {
@@ -369,9 +380,23 @@ struct EditableResultsGridView: NSViewRepresentable {
                 let edit = CellEdit(row: row, column: columnName, oldValue: oldValue, newValue: newValue)
                 onCellEdit?(edit)
                 
-                // 刷新单元格显示
-                tableView?.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: columnIndex))
+                // 更新颜色显示
+                sender.textColor = editedColor
             }
+        }
+        
+        // 选中行变化
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard let tableView = notification.object as? NSTableView else { return }
+            let selectedRow = tableView.selectedRow
+            onRowSelect?(selectedRow >= 0 ? selectedRow : nil)
+        }
+        
+        // 排序变化
+        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+            guard let sortDescriptor = tableView.sortDescriptors.first,
+                  let key = sortDescriptor.key else { return }
+            onSort?(key)
         }
         
         // MARK: - 右键菜单操作
@@ -505,17 +530,21 @@ class EditableTableView: NSTableView {
     func editCell(row: Int, column: Int) {
         guard row >= 0 && column >= 0 && column < tableColumns.count else { return }
         
-        // 获取单元格视图
-        if let cellView = view(atColumn: column, row: row, makeIfNecessary: false) as? NSTextField {
+        // 获取单元格视图（现在是 NSTableCellView）
+        if let tableCellView = view(atColumn: column, row: row, makeIfNecessary: false) as? NSTableCellView,
+           let textField = tableCellView.textField {
             // 选中该行
             selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             
-            // 开始编辑
-            window?.makeFirstResponder(cellView)
-            
-            // 选中所有文字
-            if let editor = cellView.currentEditor() {
-                editor.selectAll(nil)
+            // 确保 textField 可以成为第一响应者
+            if textField.acceptsFirstResponder {
+                // 开始编辑
+                window?.makeFirstResponder(textField)
+                
+                // 选中所有文字
+                if let editor = textField.currentEditor() {
+                    editor.selectAll(nil)
+                }
             }
         }
     }

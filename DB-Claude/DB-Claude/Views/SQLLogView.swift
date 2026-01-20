@@ -57,40 +57,49 @@ struct SQLLogView: View {
             // 工具栏
             toolbarView
             
-            Divider()
+            AppDivider()
             
             // 日志列表
             if filteredLogs.isEmpty {
-                emptyView
+                AppEmptyState(
+                    icon: "doc.text.magnifyingglass",
+                    title: "暂无 SQL 执行记录",
+                    message: "执行查询后，SQL 日志会显示在这里"
+                )
             } else {
                 logListView
             }
         }
+        .background(AppColors.background)
         .frame(minWidth: 600, minHeight: 400)
     }
     
     // MARK: - 工具栏
     private var toolbarView: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AppSpacing.md) {
             // 搜索框
-            HStack {
+            HStack(spacing: AppSpacing.sm) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.tertiaryText)
                 TextField("搜索 SQL...", text: $searchText)
                     .textFieldStyle(.plain)
+                    .font(.system(size: 12))
                 if !searchText.isEmpty {
                     Button {
                         searchText = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.tertiaryText)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(6)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(6)
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.vertical, AppSpacing.xs)
+            .background(AppColors.tertiaryBackground)
+            .cornerRadius(AppRadius.sm)
             .frame(maxWidth: 300)
             
             // 连接筛选
@@ -124,8 +133,8 @@ struct SQLLogView: View {
             
             // 统计信息
             Text("\(filteredLogs.count) 条记录")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(.system(size: 11))
+                .foregroundColor(AppColors.secondaryText)
             
             // 导出按钮
             Button {
@@ -133,7 +142,7 @@ struct SQLLogView: View {
             } label: {
                 Image(systemName: "square.and.arrow.up")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(AppIconButtonStyle())
             .help("导出日志")
             
             // 清除按钮
@@ -142,12 +151,12 @@ struct SQLLogView: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(AppIconButtonStyle())
             .help("清除所有日志")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, AppSpacing.sm)
+        .background(AppColors.secondaryBackground)
     }
     
     // MARK: - 日志列表
@@ -158,24 +167,8 @@ struct SQLLogView: View {
                     SQLLogRow(log: log)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, AppSpacing.xs)
         }
-    }
-    
-    // MARK: - 空状态
-    private var emptyView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 40))
-                .foregroundColor(.secondary)
-            Text("暂无 SQL 执行记录")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            Text("执行查询后，SQL 日志会显示在这里")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - 导出
@@ -204,46 +197,46 @@ struct SQLLogRow: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AppSpacing.xs) {
             // 主行
-            HStack(spacing: 8) {
+            HStack(spacing: AppSpacing.sm) {
                 // 状态图标
                 Image(systemName: log.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundColor(log.success ? .green : .red)
+                    .foregroundColor(log.success ? AppColors.success : AppColors.error)
                     .font(.system(size: 12))
                 
                 // 时间
                 Text(dateFormatter.string(from: log.timestamp))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(AppColors.secondaryText)
                 
                 // 数据库类型
                 Text(log.databaseType)
-                    .font(.caption)
-                    .padding(.horizontal, 4)
+                    .font(.system(size: 10))
+                    .padding(.horizontal, AppSpacing.xs)
                     .padding(.vertical, 1)
-                    .background(databaseTypeColor.opacity(0.2))
+                    .background(databaseTypeColor.opacity(0.15))
                     .foregroundColor(databaseTypeColor)
-                    .cornerRadius(3)
+                    .cornerRadius(AppRadius.sm)
                 
                 // 连接名称
                 Text(log.connectionName)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 11))
+                    .foregroundColor(AppColors.secondaryText)
                     .lineLimit(1)
                 
                 Spacer()
                 
                 // 执行时间
                 Text(String(format: "%.3fs", log.duration))
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(durationColor)
                 
                 // 行数
                 if let rowCount = log.rowCount {
                     Text("\(rowCount) 行")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundColor(AppColors.secondaryText)
                 }
                 
                 // 复制按钮
@@ -261,7 +254,7 @@ struct SQLLogRow: View {
                 } label: {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 11))
-                        .foregroundColor(isCopied ? .green : .secondary)
+                        .foregroundColor(isCopied ? AppColors.success : AppColors.secondaryText)
                 }
                 .buttonStyle(.plain)
                 .help("复制 SQL")
@@ -274,7 +267,7 @@ struct SQLLogRow: View {
                 } label: {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(AppColors.secondaryText)
                 }
                 .buttonStyle(.plain)
             }
@@ -282,8 +275,8 @@ struct SQLLogRow: View {
             // SQL 预览（单行）
             if !isExpanded {
                 Text(log.sql.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.primary)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(AppColors.primaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -292,33 +285,34 @@ struct SQLLogRow: View {
             if isExpanded {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(log.sql)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.primary)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(AppColors.primaryText)
                         .textSelection(.enabled)
                 }
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(4)
+                .padding(AppSpacing.sm)
+                .background(AppColors.tertiaryBackground)
+                .cornerRadius(AppRadius.sm)
                 
                 // 错误信息
                 if let error = log.errorMessage {
-                    HStack {
+                    HStack(spacing: AppSpacing.xs) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.red)
+                            .foregroundColor(AppColors.error)
                             .font(.system(size: 11))
                         Text(error)
-                            .font(.caption)
-                            .foregroundColor(.red)
+                            .font(.system(size: 11))
+                            .foregroundColor(AppColors.error)
                     }
-                    .padding(6)
-                    .background(Color.red.opacity(0.1))
-                    .cornerRadius(4)
+                    .padding(AppSpacing.sm)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppColors.error.opacity(0.08))
+                    .cornerRadius(AppRadius.sm)
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(log.success ? Color.clear : Color.red.opacity(0.05))
+        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, AppSpacing.sm)
+        .background(log.success ? Color.clear : AppColors.error.opacity(0.03))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             // 双击复制 SQL
@@ -329,17 +323,17 @@ struct SQLLogRow: View {
     
     private var databaseTypeColor: Color {
         switch log.databaseType.lowercased() {
-        case "mysql": return .orange
-        case "sqlite": return .blue
-        case "postgresql": return .teal
-        default: return .gray
+        case "mysql": return AppColors.warning
+        case "sqlite": return AppColors.accent
+        case "postgresql": return Color.teal
+        default: return AppColors.secondaryText
         }
     }
     
     private var durationColor: Color {
-        if log.duration < 0.1 { return .green }
-        else if log.duration < 1.0 { return .orange }
-        else { return .red }
+        if log.duration < 0.1 { return AppColors.success }
+        else if log.duration < 1.0 { return AppColors.warning }
+        else { return AppColors.error }
     }
 }
 

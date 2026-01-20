@@ -32,7 +32,7 @@ struct QueryEditorView: View {
     var body: some View {
         ZStack {
             VSplitView {
-                // Editor Area - 扁平化设计
+                // Editor Area
                 VStack(spacing: 0) {
                     // 工具栏
                     queryToolbar
@@ -68,10 +68,10 @@ struct QueryEditorView: View {
                 .background(AppColors.background)
                 .frame(minHeight: 100)
                 
-                // Results Area - 扁平化设计
+                // Results Area
                 VStack(alignment: .leading, spacing: 0) {
                     if let error = errorMessage {
-                        errorView(error)
+                        AppErrorState(message: error)
                     } else {
                         EditableResultsGridView(results: results, tableName: "query_result", isEditable: false)
                         statusBar
@@ -112,12 +112,12 @@ struct QueryEditorView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
-                        .foregroundColor(.orange)
+                        .foregroundColor(AppColors.warning)
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(error.message)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppColors.warning)
                         
                         if let suggestion = error.suggestion {
                             Text("💡 " + suggestion)
@@ -132,10 +132,10 @@ struct QueryEditorView: View {
         }
         .padding(.horizontal, AppSpacing.md)
         .padding(.vertical, AppSpacing.sm)
-        .background(Color.orange.opacity(0.1))
+        .background(AppColors.warning.opacity(0.1))
         .overlay(
             Rectangle()
-                .fill(Color.orange)
+                .fill(AppColors.warning)
                 .frame(width: 3),
             alignment: .leading
         )
@@ -152,42 +152,27 @@ struct QueryEditorView: View {
                     Text("运行")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .padding(.horizontal, AppSpacing.md)
-                .padding(.vertical, AppSpacing.sm)
-                .background(AppColors.accent)
-                .foregroundColor(.white)
-                .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppPrimaryButtonStyle())
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(isExecuting)
             
             // 清空按钮
             Button(action: { sql = "" }) {
                 Image(systemName: "trash")
-                    .font(.system(size: 12))
-                    .foregroundColor(AppColors.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(AppColors.hover)
-                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppIconButtonStyle())
             .help("清空")
             
             // 格式化按钮
             Button(action: formatSQL) {
                 Image(systemName: "text.alignleft")
-                    .font(.system(size: 12))
-                    .foregroundColor(AppColors.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(AppColors.hover)
-                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AppIconButtonStyle())
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .help("格式化 SQL (⌘⇧F)")
             
-            Divider()
+            AppDivider(axis: .vertical)
                 .frame(height: 20)
             
             // 字体大小控制
@@ -232,7 +217,7 @@ struct QueryEditorView: View {
             // 提示信息
             Text("Tab 补全 | ⌘↩ 执行 | 选中后执行")
                 .font(.system(size: 10))
-                .foregroundColor(AppColors.secondaryText.opacity(0.7))
+                .foregroundColor(AppColors.tertiaryText)
             
             // 执行状态
             if isExecuting {
@@ -250,51 +235,21 @@ struct QueryEditorView: View {
         .background(AppColors.secondaryBackground)
     }
     
-    // MARK: - 错误视图
-    private func errorView(_ error: String) -> some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: AppSpacing.sm) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(AppColors.error)
-                    .font(.system(size: 14))
-                
-                Text(error)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(AppColors.error)
-                    .textSelection(.enabled)
-            }
-            .padding(AppSpacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(AppColors.error.opacity(0.05))
-    }
-    
     // MARK: - 状态栏
     private var statusBar: some View {
-        HStack(spacing: AppSpacing.md) {
-            // 行数
-            HStack(spacing: AppSpacing.xs) {
-                Image(systemName: "list.number")
-                    .font(.system(size: 10))
-                Text("\(results.count) 行")
-            }
-            
-            // 执行时间
-            if executionTime > 0 {
-                HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text(String(format: "%.3f 秒", executionTime))
-                }
-            }
-            
-            Spacer()
+        AppStatusBar(items: statusItems) {
+            EmptyView()
         }
-        .font(.system(size: 11))
-        .foregroundColor(AppColors.secondaryText)
-        .padding(.horizontal, AppSpacing.md)
-        .padding(.vertical, AppSpacing.sm)
-        .background(AppColors.secondaryBackground)
+    }
+    
+    private var statusItems: [StatusItem] {
+        var items: [StatusItem] = [
+            StatusItem("\(results.count) 行", icon: "list.number")
+        ]
+        if executionTime > 0 {
+            items.append(StatusItem(String(format: "%.3f 秒", executionTime), icon: "clock"))
+        }
+        return items
     }
     
     // MARK: - 加载 Schema 用于自动补全
@@ -578,7 +533,7 @@ struct ToastView: View {
     let message: String
     
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppSpacing.sm) {
             Image(systemName: "keyboard")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.9))
@@ -587,12 +542,12 @@ struct ToastView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, AppSpacing.lg)
+        .padding(.vertical, AppSpacing.sm)
         .background(
             Capsule()
-                .fill(Color.black.opacity(0.8))
-                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                .fill(Color.black.opacity(0.85))
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
         )
     }
 }

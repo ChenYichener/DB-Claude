@@ -97,29 +97,15 @@ struct ContentView: View {
                         
                         // 错误信息
                         if let error = errorMessage {
-                            HStack(spacing: AppSpacing.sm) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundColor(AppColors.error)
-                                Text(error)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(AppColors.error)
-                            }
-                            .padding(AppSpacing.md)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AppColors.error.opacity(0.1))
+                            AppErrorState(message: error)
                         }
                         
                         // 表列表（使用过滤后的列表）
                         if filteredTables.isEmpty && !tableSearchText.isEmpty {
-                            VStack(spacing: AppSpacing.sm) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 24, weight: .light))
-                                    .foregroundColor(AppColors.tertiaryText)
-                                Text("未找到匹配的表")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(AppColors.secondaryText)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            AppEmptyState(
+                                icon: "magnifyingglass",
+                                title: "未找到匹配的表"
+                            )
                         } else {
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: AppSpacing.xxs) {

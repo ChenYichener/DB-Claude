@@ -190,6 +190,13 @@ struct TableDataView: View {
     // MARK: - 工具栏
     private var tableToolbar: some View {
         HStack(spacing: AppSpacing.md) {
+            // 筛选按钮（最左边）
+            FilterToggleButton(isActive: showFilterBar, hasFilters: !filters.isEmpty) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showFilterBar.toggle()
+                }
+            }
+            
             // 表名
             HStack(spacing: AppSpacing.sm) {
                 Image(systemName: "tablecells.fill")
@@ -234,13 +241,6 @@ struct TableDataView: View {
                             .font(.system(size: 11))
                             .foregroundColor(AppColors.secondaryText)
                     }
-                }
-            }
-            
-            // 筛选按钮
-            FilterToggleButton(isActive: showFilterBar, hasFilters: !filters.isEmpty) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showFilterBar.toggle()
                 }
             }
             
@@ -293,6 +293,18 @@ struct TableDataView: View {
     // MARK: - 筛选栏
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: AppSpacing.sm) {
+            // 列信息加载状态
+            if availableColumns.isEmpty {
+                HStack(spacing: AppSpacing.sm) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在加载列信息...")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.secondaryText)
+                }
+                .padding(.vertical, AppSpacing.xs)
+            }
+            
             // 筛选条件列表
             ForEach($filters) { $filter in
                 FilterRowView(
@@ -317,7 +329,15 @@ struct TableDataView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(AppColors.accent)
+                .foregroundColor(availableColumns.isEmpty ? AppColors.tertiaryText : AppColors.accent)
+                .disabled(availableColumns.isEmpty)
+                
+                // 列数提示
+                if !availableColumns.isEmpty {
+                    Text("可筛选 \(availableColumns.count) 个字段")
+                        .font(.system(size: 11))
+                        .foregroundColor(AppColors.tertiaryText)
+                }
                 
                 Spacer()
                 
@@ -346,6 +366,7 @@ struct TableDataView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .disabled(filters.isEmpty)
             }
         }
         .padding(AppSpacing.md)
@@ -360,31 +381,14 @@ struct TableDataView: View {
     
     // MARK: - 加载视图
     private var loadingView: some View {
-        HStack(spacing: AppSpacing.sm) {
-            ProgressView()
-                .controlSize(.small)
-            Text("加载数据...")
-                .font(.system(size: 12))
-                .foregroundColor(AppColors.secondaryText)
-        }
-        .padding(AppSpacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        AppLoadingState(message: "加载数据...")
     }
     
     // MARK: - 错误视图
     private func errorView(_ error: String) -> some View {
-        HStack(spacing: AppSpacing.sm) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(AppColors.error)
-            
-            Text(error)
-                .font(.system(size: 12))
-                .foregroundColor(AppColors.error)
+        AppErrorState(message: error) {
+            Task { await loadData() }
         }
-        .padding(AppSpacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppColors.error.opacity(0.1))
     }
     
     // MARK: - 空视图
@@ -713,18 +717,45 @@ struct TableDataView: View {
     // 加载列信息
     private func loadColumns() async {
         do {
-            // 通过 PRAGMA 或 LIMIT 0 查询获取列名
-            let sql = "SELECT * FROM \(table) LIMIT 0"
+            // 方案1：通过 PRAGMA table_info 获取列信息（更可靠）
+            let pragmaSql = "PRAGMA table_info(\(table))"
+            let pragmaResult = try await driver.execute(sql: pragmaSql)
+            
+            // 过滤掉 __columns__ 元数据行，提取 name 字段
+            let cols = pragmaResult
+                .filter { $0["__columns__"] == nil }
+                .compactMap { $0["name"] }
+            
+            if !cols.isEmpty {
+                await MainActor.run {
+                    self.availableColumns = cols
+                }
+                return
+            }
+            
+            // 方案2：通过 LIMIT 1 查询获取列名（备用）
+            let sql = "SELECT * FROM \(table) LIMIT 1"
             let result = try await driver.execute(sql: sql)
             
             if let first = result.first, let columnsStr = first["__columns__"] {
-                let cols = columnsStr.split(separator: ",").map { String($0) }
+                let columns = columnsStr.split(separator: ",").map { String($0) }
                 await MainActor.run {
-                    self.availableColumns = cols
+                    self.availableColumns = columns
                 }
             }
         } catch {
             // 忽略错误，使用空列表
+            print("[loadColumns] 加载列信息失败: \(error)")
+        }
+    }
+    
+    // 从当前结果中提取列信息（作为最后备用）
+    private func extractColumnsFromResults() {
+        if let first = results.first, let columnsStr = first["__columns__"] {
+            let cols = columnsStr.split(separator: ",").map { String($0) }
+            if availableColumns.isEmpty && !cols.isEmpty {
+                availableColumns = cols
+            }
         }
     }
 
@@ -767,6 +798,8 @@ struct TableDataView: View {
                 self.results = data
                 self.executionTime = elapsed
                 self.isLoading = false
+                // 如果列信息为空，从结果中提取
+                self.extractColumnsFromResults()
             }
         } catch {
             await MainActor.run {
@@ -873,13 +906,31 @@ struct FilterRowView: View {
     var body: some View {
         HStack(spacing: AppSpacing.sm) {
             // 字段选择
-            Picker("", selection: $filter.field) {
-                ForEach(columns, id: \.self) { column in
-                    Text(column).tag(column)
+            if columns.isEmpty {
+                // 列信息为空时显示提示
+                Text("加载列信息中...")
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.tertiaryText)
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.vertical, AppSpacing.xs)
+                    .background(AppColors.tertiaryBackground)
+                    .cornerRadius(AppRadius.sm)
+                    .frame(width: 120)
+            } else {
+                Picker("", selection: $filter.field) {
+                    ForEach(columns, id: \.self) { column in
+                        Text(column).tag(column)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 120)
+                .onChange(of: columns) { oldValue, newValue in
+                    // 当列信息更新时，如果当前选中的字段不在列表中，自动选择第一个
+                    if !newValue.isEmpty && !newValue.contains(filter.field) {
+                        filter.field = newValue.first ?? ""
+                    }
                 }
             }
-            .pickerStyle(.menu)
-            .frame(width: 120)
             
             // 操作符选择
             Picker("", selection: $filter.op) {
