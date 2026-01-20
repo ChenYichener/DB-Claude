@@ -135,6 +135,14 @@ struct EditableResultsGridView: NSViewRepresentable {
         
         let coordinator = context.coordinator
         let needsReload = coordinator.dataHash != dataHash || coordinator.columns != columns
+        let editModeChanged = coordinator.isEditable != isEditable
+        
+        // 检查是否正在编辑
+        let firstResponder = tableView.window?.firstResponder
+        let isCurrentlyEditing = firstResponder is NSTextView || 
+                                 (firstResponder is NSTextField && tableView.isEditingEnabled)
+        
+        print("[EditableGrid] updateNSView: needsReload=\(needsReload), editModeChanged=\(editModeChanged), isEditable=\(isEditable)")
         
         // 更新数据
         coordinator.columns = columns
@@ -152,6 +160,12 @@ struct EditableResultsGridView: NSViewRepresentable {
         // 更新编辑模式
         tableView.isEditingEnabled = isEditable
         
+        // 关键修复：当编辑模式变化时，更新所有可见单元格的 isEditable 属性
+        if editModeChanged {
+            print("[EditableGrid] updateNSView: 编辑模式变化，更新所有可见单元格")
+            updateAllVisibleCellsEditability(tableView: tableView, isEditable: isEditable)
+        }
+        
         // 检查列是否变化
         let existingColumns = tableView.tableColumns.map { $0.identifier.rawValue }
         if existingColumns != columns {
@@ -162,8 +176,27 @@ struct EditableResultsGridView: NSViewRepresentable {
         // 更新排序指示器
         updateSortIndicators(tableView: tableView)
         
-        if needsReload {
+        // 关键修复：如果正在编辑，不要 reloadData，否则会导致编辑被中断
+        if needsReload && !isCurrentlyEditing {
+            print("[EditableGrid] updateNSView: 执行 reloadData")
             tableView.reloadData()
+        } else if needsReload && isCurrentlyEditing {
+            print("[EditableGrid] updateNSView: 跳过 reloadData（正在编辑中）")
+        }
+    }
+    
+    // 更新所有可见单元格的编辑状态
+    private func updateAllVisibleCellsEditability(tableView: NSTableView, isEditable: Bool) {
+        let visibleRows = tableView.rows(in: tableView.visibleRect)
+        print("[EditableGrid] 更新可见单元格: rows=\(visibleRows.location)..<\(visibleRows.location + visibleRows.length), isEditable=\(isEditable)")
+        
+        for row in visibleRows.location..<(visibleRows.location + visibleRows.length) {
+            for col in 0..<tableView.numberOfColumns {
+                if let cellView = tableView.view(atColumn: col, row: row, makeIfNecessary: false) as? NSTableCellView,
+                   let textField = cellView.textField {
+                    textField.isEditable = isEditable
+                }
+            }
         }
     }
     
@@ -231,7 +264,7 @@ struct EditableResultsGridView: NSViewRepresentable {
     }
     
     // MARK: - Coordinator
-    class Coordinator: NSObject, NSTableViewDelegate, NSTableViewDataSource {
+    class Coordinator: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate {
         var columns: [String]
         var rowData: [[String?]]
         var dataHash: Int
@@ -255,6 +288,9 @@ struct EditableResultsGridView: NSViewRepresentable {
         
         // 编辑跟踪
         var editedCells: [String: String?] = [:]  // "row_col" -> newValue
+        
+        // 调试标志
+        private let debugEnabled = true
         
         init(columns: [String], rowData: [[String?]], dataHash: Int, tableName: String,
              sortColumn: String?, sortOrder: SortOrder, isEditable: Bool,
@@ -280,6 +316,14 @@ struct EditableResultsGridView: NSViewRepresentable {
             for (index, col) in columns.enumerated() {
                 columnIndexMap[col] = index
             }
+            
+            debugLog("Coordinator 初始化完成, isEditable=\(isEditable), columns=\(columns)")
+        }
+        
+        private func debugLog(_ message: String) {
+            if debugEnabled {
+                print("[EditableGrid] \(message)")
+            }
         }
         
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -302,6 +346,7 @@ struct EditableResultsGridView: NSViewRepresentable {
                let existingTextField = reusedCell.textField {
                 cellView = reusedCell
                 textField = existingTextField
+                debugLog("复用单元格: row=\(row), col=\(columnName)")
             } else {
                 // 创建新的 NSTableCellView
                 cellView = NSTableCellView()
@@ -315,10 +360,6 @@ struct EditableResultsGridView: NSViewRepresentable {
                 textField.cell?.truncatesLastVisibleLine = true
                 textField.focusRingType = .exterior
                 
-                // 设置 target/action 来处理编辑完成事件
-                textField.target = self
-                textField.action = #selector(textFieldDidEndEditing(_:))
-                
                 // 添加到 cellView 并设置约束
                 cellView.addSubview(textField)
                 cellView.textField = textField
@@ -329,11 +370,23 @@ struct EditableResultsGridView: NSViewRepresentable {
                     textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
                     textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
                 ])
+                
+                debugLog("创建新单元格: row=\(row), col=\(columnName)")
             }
+            
+            // 关键：设置 delegate 来捕获所有编辑结束事件（不仅仅是按 Enter）
+            // NSTextFieldDelegate 的 controlTextDidEndEditing 会在失去焦点时触发
+            textField.delegate = self
+            
+            // 同时保留 target/action 作为备用（按 Enter 时触发）
+            textField.target = self
+            textField.action = #selector(textFieldActionTriggered(_:))
             
             // 设置是否可编辑和可选择
             textField.isEditable = isEditable
             textField.isSelectable = true
+            
+            debugLog("配置单元格: row=\(row), col=\(columnName), isEditable=\(isEditable)")
             
             // 检查是否有编辑过的值
             let editKey = "\(row)_\(columnIndex)"
@@ -362,21 +415,56 @@ struct EditableResultsGridView: NSViewRepresentable {
             return cellView
         }
         
-        // 编辑完成时的回调（通过 target/action 触发）
-        @objc func textFieldDidEndEditing(_ sender: NSTextField) {
-            guard let columnName = sender.cell?.representedObject as? String,
-                  let columnIndex = columnIndexMap[columnName] else { return }
+        // MARK: - NSTextFieldDelegate 方法
+        
+        // 编辑开始时的回调（用于调试）
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField else { return }
+            let columnName = textField.cell?.representedObject as? String ?? "unknown"
+            debugLog(">>> 编辑开始: row=\(textField.tag), col=\(columnName), value='\(textField.stringValue)'")
+        }
+        
+        // 编辑结束时的回调（NSTextFieldDelegate 方法，失去焦点时触发）
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField else {
+                debugLog("controlTextDidEndEditing: 无法获取 textField")
+                return
+            }
             
-            let row = sender.tag
-            guard row >= 0 && row < rowData.count else { return }
+            debugLog(">>> 编辑结束 (delegate): row=\(textField.tag), value='\(textField.stringValue)'")
+            processEditEnd(textField: textField)
+        }
+        
+        // 按 Enter 键时的回调（通过 target/action 触发）
+        @objc func textFieldActionTriggered(_ sender: NSTextField) {
+            debugLog(">>> Action 触发 (Enter): row=\(sender.tag), value='\(sender.stringValue)'")
+            // 注意：按 Enter 后会自动触发 controlTextDidEndEditing，所以这里不需要重复处理
+            // 但为了安全，我们可以标记一下已经处理过
+        }
+        
+        // 统一处理编辑结束逻辑
+        private func processEditEnd(textField: NSTextField) {
+            guard let columnName = textField.cell?.representedObject as? String,
+                  let columnIndex = columnIndexMap[columnName] else {
+                debugLog("processEditEnd: 无法获取列信息, representedObject=\(String(describing: textField.cell?.representedObject))")
+                return
+            }
+            
+            let row = textField.tag
+            guard row >= 0 && row < rowData.count else {
+                debugLog("processEditEnd: row 超出范围, row=\(row), count=\(rowData.count)")
+                return
+            }
             
             let oldValue = rowData[row][columnIndex]
-            var newValue: String? = sender.stringValue
+            var newValue: String? = textField.stringValue
             
             // 如果输入 "NULL" 或空字符串，视为 NULL
             if newValue == "NULL" || newValue?.isEmpty == true {
                 newValue = nil
             }
+            
+            debugLog("processEditEnd: row=\(row), col=\(columnName), oldValue='\(oldValue ?? "nil")', newValue='\(newValue ?? "nil")'")
             
             // 只在值真正变化时记录
             if oldValue != newValue {
@@ -384,10 +472,13 @@ struct EditableResultsGridView: NSViewRepresentable {
                 editedCells[editKey] = newValue
                 
                 let edit = CellEdit(row: row, column: columnName, oldValue: oldValue, newValue: newValue)
+                debugLog(">>> 记录编辑: \(edit)")
                 onCellEdit?(edit)
                 
                 // 更新颜色显示
-                sender.textColor = editedColor
+                textField.textColor = editedColor
+            } else {
+                debugLog("processEditEnd: 值未变化，不记录")
             }
         }
         
@@ -496,6 +587,15 @@ class EditableTableView: NSTableView {
     // 是否允许编辑
     var isEditingEnabled: Bool = false
     
+    // 调试标志
+    private let debugEnabled = true
+    
+    private func debugLog(_ message: String) {
+        if debugEnabled {
+            print("[EditableTableView] \(message)")
+        }
+    }
+    
     override func noteNumberOfRowsChanged() {
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
@@ -507,50 +607,121 @@ class EditableTableView: NSTableView {
     
     // 关键：允许 NSTextField 成为第一响应者，这样双击才能进入编辑模式
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+        let isTextField = responder is NSTextField
+        let result: Bool
+        
         // 如果编辑已启用且响应者是 NSTextField，允许它成为第一响应者
-        if isEditingEnabled && responder is NSTextField {
-            return true
+        if isEditingEnabled && isTextField {
+            result = true
+        } else {
+            result = super.validateProposedFirstResponder(responder, for: event)
         }
-        return super.validateProposedFirstResponder(responder, for: event)
+        
+        // 只在 NSTextField 且编辑模式下打印日志（大幅减少噪音）
+        // 注释掉这行日志，因为太多了
+        // if isEditingEnabled && isTextField {
+        //     debugLog("validateProposedFirstResponder: isTextField=\(isTextField), result=\(result)")
+        // }
+        return result
     }
     
-    // 双击开始编辑指定单元格
+    // 处理鼠标点击事件
     override func mouseDown(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
         let clickedRow = row(at: localPoint)
         let clickedColumn = column(at: localPoint)
         
+        debugLog(">>> mouseDown: clickCount=\(event.clickCount), row=\(clickedRow), col=\(clickedColumn), isEditingEnabled=\(isEditingEnabled)")
+        
         // 先执行默认的选中行为
         super.mouseDown(with: event)
         
-        // 如果是双击且启用编辑，开始编辑单元格
-        if event.clickCount == 2 && isEditingEnabled && clickedRow >= 0 && clickedColumn >= 0 {
-            // 延迟一下确保选中状态更新
-            DispatchQueue.main.async { [weak self] in
-                self?.editCell(row: clickedRow, column: clickedColumn)
+        // 如果启用编辑且点击了有效单元格
+        if isEditingEnabled && clickedRow >= 0 && clickedColumn >= 0 {
+            if event.clickCount == 2 {
+                // 双击：立即进入编辑模式
+                debugLog(">>> 双击检测到，准备编辑单元格")
+                DispatchQueue.main.async { [weak self] in
+                    self?.editCell(row: clickedRow, column: clickedColumn)
+                }
+            } else if event.clickCount == 1 {
+                // 单击：延迟进入编辑模式（给双击一个检测窗口）
+                debugLog(">>> 单击检测到，延迟进入编辑")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self = self else { return }
+                    // 检查是否仍然选中同一行
+                    if self.selectedRow == clickedRow {
+                        self.editCell(row: clickedRow, column: clickedColumn)
+                    }
+                }
             }
         }
     }
     
     // 编辑指定单元格
     func editCell(row: Int, column: Int) {
-        guard row >= 0 && column >= 0 && column < tableColumns.count else { return }
+        debugLog(">>> editCell 开始: row=\(row), column=\(column)")
+        
+        guard row >= 0 && column >= 0 && column < tableColumns.count else {
+            debugLog("editCell: 无效的 row/column")
+            return
+        }
         
         // 获取单元格视图（现在是 NSTableCellView）
         if let tableCellView = view(atColumn: column, row: row, makeIfNecessary: false) as? NSTableCellView,
            let textField = tableCellView.textField {
+            debugLog("editCell: 找到 textField")
+            debugLog("  - isEditable=\(textField.isEditable)")
+            debugLog("  - isSelectable=\(textField.isSelectable)")
+            debugLog("  - acceptsFirstResponder=\(textField.acceptsFirstResponder)")
+            debugLog("  - stringValue='\(textField.stringValue)'")
+            
+            // 确保 textField 可编辑
+            if !textField.isEditable {
+                debugLog("editCell: textField 不可编辑！强制设置为可编辑")
+                textField.isEditable = true
+            }
+            
             // 选中该行
             selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             
             // 确保 textField 可以成为第一响应者
             if textField.acceptsFirstResponder {
-                // 开始编辑
-                window?.makeFirstResponder(textField)
+                debugLog("editCell: 尝试让 textField 成为 firstResponder")
                 
-                // 选中所有文字
-                if let editor = textField.currentEditor() {
-                    editor.selectAll(nil)
+                // 方法1：使用 window.makeFirstResponder
+                let success = window?.makeFirstResponder(textField) ?? false
+                debugLog("editCell: makeFirstResponder 结果=\(success)")
+                
+                // 等待一下让 field editor 创建
+                DispatchQueue.main.async { [weak textField] in
+                    guard let textField = textField else { return }
+                    
+                    // 检查 field editor 是否已创建
+                    if let editor = textField.currentEditor() {
+                        print("[EditableTableView] editCell: field editor 已创建，选中所有文字")
+                        editor.selectAll(nil)
+                    } else {
+                        print("[EditableTableView] editCell: field editor 未创建，尝试 selectText")
+                        // 方法2：尝试使用 selectText 来触发编辑
+                        textField.selectText(nil)
+                        
+                        // 再次检查
+                        if let editor = textField.currentEditor() {
+                            print("[EditableTableView] editCell: selectText 后 field editor 已创建")
+                            editor.selectAll(nil)
+                        } else {
+                            print("[EditableTableView] editCell: selectText 后仍然没有 field editor")
+                        }
+                    }
                 }
+            } else {
+                debugLog("editCell: textField 不接受 firstResponder")
+            }
+        } else {
+            debugLog("editCell: 未找到 tableCellView 或 textField")
+            if let view = view(atColumn: column, row: row, makeIfNecessary: false) {
+                debugLog("editCell: 找到的 view 类型是 \(type(of: view))")
             }
         }
     }

@@ -208,7 +208,10 @@ enum DatabaseError: Error {
 
 ## SwiftUI 开发陷阱
 
-开发过程中遇到的 SwiftUI 问题及解决方案，详见 `/docs/swiftui-scrollview-pitfall.md`。
+开发过程中遇到的 SwiftUI 问题及解决方案：
+
+- **ScrollView 事件传递问题**：详见 `/docs/swiftui-scrollview-pitfall.md`
+- **NSTableView 单元格编辑问题**：详见 `/docs/nstableview-editing-pitfall.md`
 
 ### ScrollView 事件传递问题
 

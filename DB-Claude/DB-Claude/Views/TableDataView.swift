@@ -251,6 +251,7 @@ struct TableDataView: View {
                         // 如果有未保存的编辑，提示用户
                     }
                     isEditMode.toggle()
+                    print("[TableDataView] 编辑模式切换: isEditMode=\(isEditMode)")
                     if !isEditMode {
                         pendingEdits = []
                     }
@@ -554,15 +555,20 @@ struct TableDataView: View {
     
     // MARK: - 编辑操作
     private func handleCellEdit(_ edit: CellEdit) {
+        print("[TableDataView] handleCellEdit 被调用: row=\(edit.row), col=\(edit.column), old='\(edit.oldValue ?? "nil")', new='\(edit.newValue ?? "nil")'")
+        
         // 检查是否已有此单元格的编辑
         if let index = pendingEdits.firstIndex(where: { $0.row == edit.row && $0.column == edit.column }) {
             // 如果新值等于原始值，移除编辑记录
             if edit.newValue == edit.oldValue {
+                print("[TableDataView] 移除编辑记录（值恢复原状）")
                 pendingEdits.remove(at: index)
             } else {
+                print("[TableDataView] 更新编辑记录")
                 pendingEdits[index] = edit
             }
         } else if edit.newValue != edit.oldValue {
+            print("[TableDataView] 添加新编辑记录, 当前编辑数: \(pendingEdits.count + 1)")
             pendingEdits.append(edit)
         }
         saveError = nil
@@ -594,42 +600,102 @@ struct TableDataView: View {
         
         // 获取原始数据（过滤掉 __columns__ 元数据行）
         let originalResults = results.filter { $0["__columns__"] == nil }
-        let columns = results.first?["__columns__"]?.split(separator: ",").map(String.init) ?? []
+        
+        // 获取列信息：优先使用 availableColumns，其次从 __columns__ 元数据获取
+        var columns: [String] = availableColumns
+        if columns.isEmpty, let columnsStr = results.first?["__columns__"] {
+            columns = columnsStr.split(separator: ",").map(String.init)
+        }
+        
+        // 如果 columns 仍为空，使用 originalRow 的所有键（排除元数据键）
+        if columns.isEmpty, let firstRow = originalResults.first {
+            columns = Array(firstRow.keys).filter { !$0.hasPrefix("__") }
+        }
+        
+        // 查找主键列（常见命名：id, ID, Id, 或 表名_id, 表名Id）
+        let primaryKeyColumn = findPrimaryKeyColumn(in: columns)
+        
+        print("[generateUpdateSQL] pendingEdits=\(pendingEdits.count), originalResults=\(originalResults.count), columns=\(columns), primaryKey=\(primaryKeyColumn ?? "none")")
         
         for (row, edits) in editsByRow.sorted(by: { $0.key < $1.key }) {
-            guard row < originalResults.count else { continue }
+            guard row < originalResults.count else {
+                print("[generateUpdateSQL] 跳过行 \(row)：超出 originalResults 范围")
+                continue
+            }
             let originalRow = originalResults[row]
             
-            // 构建 SET 子句
+            // 构建 SET 子句（只包含用户编辑的字段）
             let setClauses = edits.map { edit -> String in
                 if let newValue = edit.newValue {
-                    return "\(edit.column) = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
+                    // 检测是否为数字类型
+                    if let _ = Double(newValue) {
+                        return "\(edit.column) = \(newValue)"
+                    } else {
+                        return "\(edit.column) = '\(newValue.replacingOccurrences(of: "'", with: "''"))'"
+                    }
                 } else {
                     return "\(edit.column) = NULL"
                 }
             }
             
-            // 构建 WHERE 子句（使用所有列值来唯一标识行）
-            var whereClauses: [String] = []
-            for col in columns {
-                if let value = originalRow[col] {
-                    whereClauses.append("\(col) = '\(value.replacingOccurrences(of: "'", with: "''"))'")
+            // 构建 WHERE 子句（优先使用主键）
+            var whereClause: String
+            if let pkColumn = primaryKeyColumn, let pkValue = originalRow[pkColumn] {
+                // 使用主键定位行
+                if let _ = Int(pkValue) {
+                    whereClause = "\(pkColumn) = \(pkValue)"
                 } else {
-                    whereClauses.append("\(col) IS NULL")
+                    whereClause = "\(pkColumn) = '\(pkValue.replacingOccurrences(of: "'", with: "''"))'"
                 }
+            } else {
+                // 没有主键，使用所有列值（回退方案）
+                var whereClauses: [String] = []
+                for col in columns {
+                    if let value = originalRow[col] {
+                        whereClauses.append("\(col) = '\(value.replacingOccurrences(of: "'", with: "''"))'")
+                    } else {
+                        whereClauses.append("\(col) IS NULL")
+                    }
+                }
+                whereClause = whereClauses.isEmpty ? "1=0" : whereClauses.joined(separator: " AND ")
             }
             
-            // 如果没有列信息，使用第一列
-            if whereClauses.isEmpty, let firstCol = columns.first, let firstValue = originalRow[firstCol] {
-                whereClauses.append("\(firstCol) = '\(firstValue.replacingOccurrences(of: "'", with: "''"))'")
-            }
-            
-            let whereClause = whereClauses.isEmpty ? "1=0" : whereClauses.joined(separator: " AND ")
             let sql = "UPDATE \(table) SET \(setClauses.joined(separator: ", ")) WHERE \(whereClause);"
+            print("[generateUpdateSQL] 生成 SQL: \(sql)")
             sqlStatements.append(sql)
         }
         
+        print("[generateUpdateSQL] 共生成 \(sqlStatements.count) 条 SQL")
         return sqlStatements
+    }
+    
+    // 查找主键列
+    private func findPrimaryKeyColumn(in columns: [String]) -> String? {
+        // 常见主键命名模式（按优先级）
+        let primaryKeyPatterns = [
+            "id",                           // 最常见
+            "ID",
+            "Id",
+            "\(table)_id",                  // 表名_id
+            "\(table)Id",                   // 表名Id
+            "\(table.lowercased())_id",
+            "\(table.lowercased())id",
+        ]
+        
+        for pattern in primaryKeyPatterns {
+            if columns.contains(pattern) {
+                return pattern
+            }
+        }
+        
+        // 如果没有找到，检查是否有以 _id 或 Id 结尾的列
+        for col in columns {
+            if col.lowercased() == "id" || col.hasSuffix("_id") || col.hasSuffix("Id") {
+                return col
+            }
+        }
+        
+        return nil
     }
     
     // 执行 SQL 更改

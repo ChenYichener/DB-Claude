@@ -8,6 +8,46 @@ struct SQLLogView: View {
     @State private var selectedConnectionId: UUID? = nil
     @State private var showSuccessOnly: Bool = false
     @State private var showErrorsOnly: Bool = false
+    @State private var selectedStatementType: SQLStatementType = .all
+    
+    // SQL 语句类型枚举
+    enum SQLStatementType: String, CaseIterable {
+        case all = "全部"
+        case select = "SELECT"
+        case insert = "INSERT"
+        case update = "UPDATE"
+        case delete = "DELETE"
+        case alter = "ALTER"
+        case create = "CREATE"
+        case drop = "DROP"
+        case other = "其他"
+        
+        var color: Color {
+            switch self {
+            case .all: return AppColors.secondaryText
+            case .select: return AppColors.accent
+            case .insert: return AppColors.success
+            case .update: return AppColors.warning
+            case .delete: return AppColors.error
+            case .alter: return .purple
+            case .create: return .teal
+            case .drop: return .red
+            case .other: return AppColors.secondaryText
+            }
+        }
+        
+        static func detect(from sql: String) -> SQLStatementType {
+            let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if trimmed.hasPrefix("SELECT") || trimmed.hasPrefix("EXPLAIN") { return .select }
+            if trimmed.hasPrefix("INSERT") { return .insert }
+            if trimmed.hasPrefix("UPDATE") { return .update }
+            if trimmed.hasPrefix("DELETE") { return .delete }
+            if trimmed.hasPrefix("ALTER") { return .alter }
+            if trimmed.hasPrefix("CREATE") { return .create }
+            if trimmed.hasPrefix("DROP") { return .drop }
+            return .other
+        }
+    }
     
     private var filteredLogs: [SQLLogEntry] {
         var result = logger.logs
@@ -22,6 +62,11 @@ struct SQLLogView: View {
             result = result.filter { $0.success }
         } else if showErrorsOnly {
             result = result.filter { !$0.success }
+        }
+        
+        // 按语句类型筛选
+        if selectedStatementType != .all {
+            result = result.filter { SQLStatementType.detect(from: $0.sql) == selectedStatementType }
         }
         
         // 按搜索词筛选
@@ -129,6 +174,20 @@ struct SQLLogView: View {
             }
             .frame(width: 100)
             
+            // 语句类型筛选
+            Picker("类型", selection: $selectedStatementType) {
+                ForEach(SQLStatementType.allCases, id: \.self) { type in
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(type.color)
+                            .frame(width: 6, height: 6)
+                        Text(type.rawValue)
+                    }
+                    .tag(type)
+                }
+            }
+            .frame(width: 110)
+            
             Spacer()
             
             // 统计信息
@@ -217,6 +276,15 @@ struct SQLLogRow: View {
                     .padding(.vertical, 1)
                     .background(databaseTypeColor.opacity(0.15))
                     .foregroundColor(databaseTypeColor)
+                    .cornerRadius(AppRadius.sm)
+                
+                // 语句类型
+                Text(statementType.rawValue)
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, AppSpacing.xs)
+                    .padding(.vertical, 1)
+                    .background(statementType.color.opacity(0.15))
+                    .foregroundColor(statementType.color)
                     .cornerRadius(AppRadius.sm)
                 
                 // 连接名称
@@ -334,6 +402,10 @@ struct SQLLogRow: View {
         if log.duration < 0.1 { return AppColors.success }
         else if log.duration < 1.0 { return AppColors.warning }
         else { return AppColors.error }
+    }
+    
+    private var statementType: SQLLogView.SQLStatementType {
+        SQLLogView.SQLStatementType.detect(from: log.sql)
     }
 }
 
