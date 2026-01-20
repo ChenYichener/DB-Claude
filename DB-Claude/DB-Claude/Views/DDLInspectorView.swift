@@ -44,12 +44,21 @@ struct DDLInspectorView: View {
             .background(AppColors.secondaryBackground)
 
             // DDL 内容 - 语法高亮 + 水平滚动
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                SQLHighlightedText(sql: ddl)
-                    .font(.system(size: 12, design: .monospaced))
-                    .padding(AppSpacing.md)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
+            GeometryReader { geometry in
+                ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SQLHighlightedText(sql: ddl)
+                            .font(.system(size: 13, design: .monospaced))
+                            .padding(AppSpacing.md)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: false)
+                        
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minWidth: geometry.size.width,
+                           minHeight: geometry.size.height,
+                           alignment: .topLeading)
+                }
             }
             .background(AppColors.background)
         }

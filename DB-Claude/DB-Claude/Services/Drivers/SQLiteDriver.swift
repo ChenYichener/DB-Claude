@@ -45,6 +45,12 @@ class SQLiteDriver: DatabaseDriver {
         return results.compactMap { $0["name"] }
     }
     
+    func fetchTablesWithInfo() async throws -> [TableInfo] {
+        // SQLite 不支持表级别的 comment，返回空 comment
+        let tables = try await fetchTables()
+        return tables.map { TableInfo(name: $0, comment: nil) }
+    }
+    
     func execute(sql: String) async throws -> [[String: String]] {
         let startTime = Date()
         

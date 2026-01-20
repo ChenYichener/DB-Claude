@@ -3,20 +3,20 @@ import SwiftData
 
 struct ContentView: View {
     @State private var tabManager = TabManager()
-    @State private var inspectorIsPresented: Bool = true // 默认打开
+    @State private var inspectorIsPresented: Bool = false // 默认隐藏
 
     // Sidebar state
     @State private var selection: SidebarSelection?
     @State private var selectedTable: String? // For navigation link
-    @State private var tables: [String] = []
+    @State private var tables: [TableInfo] = []
     @State private var tableSearchText: String = "" // 表搜索文本
     
     // 过滤后的表列表
-    private var filteredTables: [String] {
+    private var filteredTables: [TableInfo] {
         if tableSearchText.isEmpty {
             return tables
         }
-        return tables.filter { $0.localizedCaseInsensitiveContains(tableSearchText) }
+        return tables.filter { $0.name.localizedCaseInsensitiveContains(tableSearchText) }
     }
 
     // Inspector 状态
@@ -27,15 +27,20 @@ struct ContentView: View {
     @State private var errorMessage: String?
 
     // Inspector 内容类型
-    enum InspectorContent {
+    enum InspectorContent: Equatable {
         case history
         case ddl(table: String, content: String)
+        
+        var isHistory: Bool {
+            if case .history = self { return true }
+            return false
+        }
     }
     
     var body: some View {
         NavigationSplitView {
             SidebarView(selection: $selection)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 250)
+                .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } content: {
             if let selection = selection {
                 switch selection {
@@ -108,17 +113,17 @@ struct ContentView: View {
                             )
                         } else {
                             ScrollView {
-                                LazyVStack(alignment: .leading, spacing: AppSpacing.xxs) {
-                                    ForEach(filteredTables, id: \.self) { table in
+                                LazyVStack(alignment: .leading, spacing: 2) {
+                                    ForEach(filteredTables) { tableInfo in
                                         TableRow(
-                                            table: table,
-                                            isSelected: selectedTable == table,
+                                            tableInfo: tableInfo,
+                                            isSelected: selectedTable == tableInfo.name,
                                             onSingleTap: {
-                                                selectedTable = table
-                                                Task { await showDDLForTable(table, connection: connection) }
+                                                selectedTable = tableInfo.name
+                                                Task { await showDDLForTable(tableInfo.name, connection: connection) }
                                             },
                                             onDoubleTap: {
-                                                tabManager.openDataTab(table: table, connectionId: connection.id)
+                                                tabManager.openDataTab(table: tableInfo.name, connectionId: connection.id)
                                             }
                                         )
                                     }
@@ -144,7 +149,16 @@ struct ContentView: View {
                         }
                         .keyboardShortcut("t", modifiers: .command)
                         
-                        Button(action: { inspectorIsPresented.toggle() }) {
+                        Button(action: {
+                            // 如果已经显示历史记录，则切换面板显示状态
+                            // 否则切换到历史记录并打开面板
+                            if inspectorContent.isHistory && inspectorIsPresented {
+                                inspectorIsPresented = false
+                            } else {
+                                inspectorContent = .history
+                                inspectorIsPresented = true
+                            }
+                        }) {
                             Label("History", systemImage: "clock")
                         }
                     }
@@ -153,75 +167,115 @@ struct ContentView: View {
                 Text("Select a connection")
             }
         } detail: {
-            VStack(spacing: 0) {
-                // 双行 Tab Bar
-                if !tabManager.tabs.isEmpty {
-                    VStack(spacing: 0) {
-                        // 第一行：数据表 tabs
-                        if !tabManager.dataTabs.isEmpty {
+            HSplitView {
+                // 主内容区
+                VStack(spacing: 0) {
+                    // 双行 Tab Bar
+                    if !tabManager.tabs.isEmpty {
+                        VStack(spacing: 0) {
+                            // 第一行：数据表 tabs
+                            if !tabManager.dataTabs.isEmpty {
+                                TabBarRow(
+                                    tabManager: tabManager,
+                                    tabType: .data,
+                                    iconName: iconName,
+                                    label: "数据表"
+                                )
+                            }
+
+                            // 第二行：查询 tabs
                             TabBarRow(
-                                tabs: tabManager.dataTabs,
-                                activeTabId: tabManager.activeTabId,
                                 tabManager: tabManager,
+                                tabType: .query,
                                 iconName: iconName,
-                                label: "数据表"
+                                label: "查询",
+                                showAddButton: true,
+                                onAddTab: {
+                                    if let sel = selection {
+                                        let conn = extractConnection(from: sel)
+                                        tabManager.addQueryTab(connectionId: conn.id)
+                                    }
+                                }
                             )
                         }
-                        
-                        // 第二行：查询 tabs
-                        TabBarRow(
-                            tabs: tabManager.queryTabs,
-                            activeTabId: tabManager.activeTabId,
-                            tabManager: tabManager,
-                            iconName: iconName,
-                            label: "查询",
-                            showAddButton: true,
-                            onAddTab: {
-                                if let sel = selection {
-                                    let conn = extractConnection(from: sel)
-                                    tabManager.addQueryTab(connectionId: conn.id)
-                                }
+                        .background(AppColors.background)
+
+                        Divider()
+
+                        // Tab Content - 使用 ZStack 保持所有 tab 存活，避免状态丢失
+                        ZStack {
+                            ForEach(tabManager.tabs) { tab in
+                                TabContentWrapper(
+                                    tab: tab,
+                                    currentDriver: currentDriver,
+                                    connectionId: tab.connectionId
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .opacity(tabManager.activeTabId == tab.id ? 1 : 0)
+                                .allowsHitTesting(tabManager.activeTabId == tab.id)
                             }
-                        )
-                    }
-                    .background(AppColors.background)
-                    
-                    Divider()
-                    
-                    // Tab Content - 填充剩余空间
-                    if let activeId = tabManager.activeTabId,
-                       let activeTab = tabManager.tabs.first(where: { $0.id == activeId }) {
-                        
-                        TabContentWrapper(
-                            tab: activeTab, 
-                            currentDriver: currentDriver,
-                            connectionId: activeTab.connectionId
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        ContentUnavailableView("No Open Tabs", systemImage: "square.dashed")
+                        ContentUnavailableView("Start by selecting a table or opening a query", systemImage: "arrow.left")
                     }
-                } else {
-                    ContentUnavailableView("Start by selecting a table or opening a query", systemImage: "arrow.left")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1) // 主内容区优先占据空间
+                
+                // 右侧 Inspector 面板
+                if inspectorIsPresented {
+                    VStack(spacing: 0) {
+                        switch inspectorContent {
+                        case .history:
+                            HistoryInspectorView(
+                                onSelectSQL: { sql in
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(sql, forType: .string)
+                                },
+                                connectionID: extractConnectionID(from: selection)
+                            )
+                        case .ddl(let table, let content):
+                            DDLInspectorView(tableName: table, ddl: content)
+                        }
+                    }
+                    .frame(minWidth: 220, maxWidth: 500)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .inspector(isPresented: $inspectorIsPresented) {
-            switch inspectorContent {
-            case .history:
-                HistoryInspectorView(
-                    onSelectSQL: { sql in
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(sql, forType: .string)
-                    },
-                    connectionID: extractConnectionID(from: selection)
-                )
-            case .ddl(let table, let content):
-                DDLInspectorView(tableName: table, ddl: content)
+        // MARK: - 快捷键：Command+数字切换查询标签页
+        .background(
+            Group {
+                // Command+1 切换到第1个查询标签页
+                Button(action: { switchToQueryTab(index: 0) }) { EmptyView() }
+                    .keyboardShortcut("1", modifiers: .command)
+                
+                // Command+2 切换到第2个查询标签页
+                Button(action: { switchToQueryTab(index: 1) }) { EmptyView() }
+                    .keyboardShortcut("2", modifiers: .command)
+                
+                // Command+3 切换到第3个查询标签页
+                Button(action: { switchToQueryTab(index: 2) }) { EmptyView() }
+                    .keyboardShortcut("3", modifiers: .command)
+                
+                // Command+4 切换到第4个查询标签页
+                Button(action: { switchToQueryTab(index: 3) }) { EmptyView() }
+                    .keyboardShortcut("4", modifiers: .command)
+                
+                // Command+5 切换到第5个查询标签页
+                Button(action: { switchToQueryTab(index: 4) }) { EmptyView() }
+                    .keyboardShortcut("5", modifiers: .command)
             }
+            .opacity(0)
+        )
+    }
+    
+    /// 切换到指定索引的查询标签页
+    private func switchToQueryTab(index: Int) {
+        let queryTabs = tabManager.queryTabs
+        if index < queryTabs.count {
+            tabManager.activeTabId = queryTabs[index].id
         }
-        .inspectorColumnWidth(min: 250, ideal: 350, max: 600)
     }
     
     private func iconName(for type: TabType) -> String {
@@ -259,7 +313,17 @@ struct ContentView: View {
             guard let driver = createDriver(for: connection) else { return }
             currentDriver = driver
             try await driver.connect()
-            tables = try await driver.fetchTables()
+            tables = try await driver.fetchTablesWithInfo()
+            
+            // 加载成功后，如果当前没有该连接的查询标签页，自动创建一个
+            await MainActor.run {
+                let hasQueryTab = tabManager.tabs.contains { tab in
+                    tab.connectionId == connection.id && tab.type == .query
+                }
+                if !hasQueryTab {
+                    tabManager.addQueryTab(connectionId: connection.id)
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -449,32 +513,43 @@ struct DataTabView: View {
 
 // MARK: - Tab Bar 行视图
 struct TabBarRow: View {
-    let tabs: [WorkspaceTab]
-    let activeTabId: UUID?
-    let tabManager: TabManager
+    @Bindable var tabManager: TabManager
+    let tabType: TabRowType
     let iconName: (TabType) -> String
     var label: String = ""
     var showAddButton: Bool = false
     var onAddTab: (() -> Void)?
-    
+
+    enum TabRowType {
+        case data
+        case query
+    }
+
+    private var tabs: [WorkspaceTab] {
+        switch tabType {
+        case .data: return tabManager.dataTabs
+        case .query: return tabManager.queryTabs
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: AppSpacing.sm) {
             // 行标签
             if !label.isEmpty {
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(AppColors.tertiaryText)
                     .frame(width: 40)
                     .padding(.leading, AppSpacing.sm)
             }
-            
+
             // 滚动的 tabs
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: AppSpacing.xs) {
+                HStack(spacing: AppSpacing.sm) {
                     ForEach(tabs) { tab in
                         TabItemView(
                             tab: tab,
-                            isActive: activeTabId == tab.id,
+                            isActive: tabManager.activeTabId == tab.id,
                             iconName: iconName(tab.type),
                             onSelect: {
                                 tabManager.activeTabId = tab.id
@@ -488,27 +563,26 @@ struct TabBarRow: View {
                         )
                     }
                 }
-                .padding(.horizontal, AppSpacing.sm)
+                .padding(.horizontal, AppSpacing.md)
+                .padding(.vertical, AppSpacing.xs)
             }
-            
+
             // 添加按钮
             if showAddButton {
                 Button {
                     onAddTab?()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(AppColors.secondaryText)
                         .frame(width: 24, height: 24)
-                        .background(AppColors.hover)
-                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(AppIconButtonStyle(size: 24))
                 .padding(.trailing, AppSpacing.sm)
             }
         }
-        .frame(height: 32)
-        .background(AppColors.secondaryBackground.opacity(0.5))
+        .frame(height: 36)
+        .background(.ultraThinMaterial)  // 毛玻璃效果
     }
 }
 
@@ -520,104 +594,118 @@ struct TabItemView: View {
     let onSelect: () -> Void
     let onClose: () -> Void
     var onRename: ((String) -> Void)?
-    
+
     @State private var isHovering = false
     @State private var isCloseHovering = false
     @State private var isEditing = false
     @State private var editingTitle = ""
-    
+
     var body: some View {
-        HStack(spacing: 0) {
-            // 可点击的标题区域
-            HStack(spacing: AppSpacing.xs) {
-                Image(systemName: iconName)
-                    .font(.system(size: 11, weight: .medium))
-                
-                if isEditing {
-                    TextField("", text: $editingTitle, onCommit: {
-                        if !editingTitle.isEmpty {
-                            onRename?(editingTitle)
-                        }
-                        isEditing = false
-                    })
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(minWidth: 60, maxWidth: 120)
-                    .onExitCommand {
-                        isEditing = false
+        HStack(spacing: AppSpacing.xs) {
+            Image(systemName: iconName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(isActive ? .white : AppColors.secondaryText)
+
+            if isEditing {
+                TextField("", text: $editingTitle, onCommit: {
+                    if !editingTitle.isEmpty {
+                        onRename?(editingTitle)
                     }
-                } else {
-                    Text(tab.title)
-                        .font(.system(size: 12, weight: isActive ? .medium : .regular))
-                        .lineLimit(1)
+                    isEditing = false
+                })
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .frame(minWidth: 50, maxWidth: 100)
+                .onExitCommand {
+                    isEditing = false
                 }
+            } else {
+                Text(tab.title)
+                    .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                    .lineLimit(1)
             }
-            .padding(.vertical, AppSpacing.sm)
-            .padding(.leading, AppSpacing.md)
-            .padding(.trailing, AppSpacing.xs)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                if onRename != nil {
-                    editingTitle = tab.title
-                    isEditing = true
-                }
-            }
-            .onTapGesture {
-                if !isEditing {
-                    onSelect()
-                }
-            }
-            
-            // 独立的关闭按钮区域
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundColor(closeButtonColor)
-                .frame(width: 14, height: 14)
-                .background(
-                    Circle()
-                        .fill(isCloseHovering ? closeHoverBackground : Color.clear)
-                )
-                .contentShape(Rectangle())
-                .onHover { isCloseHovering = $0 }
-                .onTapGesture {
-                    onClose()
-                }
-                .padding(.trailing, AppSpacing.sm)
+
+            Spacer(minLength: 20)  // 为关闭按钮留出空间
         }
+        .padding(.vertical, AppSpacing.xs)
+        .padding(.horizontal, AppSpacing.sm)
         .background(tabBackground)
         .foregroundColor(isActive ? .white : AppColors.primaryText)
-        .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+        .clipShape(Capsule())
         .overlay(
-            RoundedRectangle(cornerRadius: AppRadius.md)
-                .stroke(isActive ? Color.clear : AppColors.border, lineWidth: 1)
+            Capsule()
+                .stroke(isActive ? Color.clear : AppColors.border.opacity(0.5), lineWidth: 1)
         )
+        .overlay(alignment: .trailing) {
+            // 关闭按钮 - 使用 overlay 叠加，不参与布局
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(closeButtonColor)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        Circle()
+                            .fill(isCloseHovering ? closeHoverBackground : Color.clear)
+                    )
+                    .scaleEffect(isCloseHovering ? 1.1 : 1.0)
+            }
+            .buttonStyle(.plain)
+            .animation(AppAnimation.bouncy, value: isCloseHovering)
+            .onHover { isCloseHovering = $0 }
+            .padding(.trailing, AppSpacing.sm)
+        }
+        .scaleEffect(isHovering && !isActive ? 1.02 : 1.0)
+        .animation(AppAnimation.fast, value: isHovering)
+        .animation(AppAnimation.medium, value: isActive)
+        .shadow(color: isActive ? AppColors.accent.opacity(0.3) : Color.clear, radius: 8, y: 2)
         .onHover { isHovering = $0 }
+        .onTapGesture {
+            if !isEditing {
+                onSelect()
+            }
+        }
+        .contextMenu {
+            if onRename != nil {
+                Button(action: {
+                    editingTitle = tab.title
+                    isEditing = true
+                }) {
+                    Label("重命名", systemImage: "pencil")
+                }
+
+                Divider()
+            }
+
+            Button(role: .destructive, action: onClose) {
+                Label("关闭", systemImage: "xmark")
+            }
+        }
     }
-    
+
     private var tabBackground: Color {
         if isActive {
             return AppColors.accent
         } else if isHovering {
             return AppColors.hover
         }
-        return Color.clear
+        return AppColors.secondaryBackground.opacity(0.5)
     }
-    
+
     private var closeButtonColor: Color {
         if isActive {
-            return .white.opacity(0.7)
+            return .white.opacity(0.8)
         }
         return isCloseHovering ? AppColors.primaryText : AppColors.tertiaryText
     }
-    
+
     private var closeHoverBackground: Color {
         isActive ? Color.white.opacity(0.2) : AppColors.pressed
     }
 }
 
-// 自定义表行 - 扁平化设计
+// 自定义表行 - 紧凑设计
 struct TableRow: View {
-    let table: String
+    let tableInfo: TableInfo
     let isSelected: Bool
     let onSingleTap: () -> Void
     let onDoubleTap: () -> Void
@@ -625,31 +713,32 @@ struct TableRow: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: AppSpacing.sm) {
+        HStack(spacing: AppSpacing.xs) {
             // 表图标
             Image(systemName: "tablecells")
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundColor(isSelected ? .white : AppColors.secondaryText)
             
             // 表名
-            Text(table)
-                .font(.system(size: 13))
+            Text(tableInfo.name)
+                .font(.system(size: 12))
                 .lineLimit(1)
             
-            Spacer()
-            
-            // 双击提示（悬停时显示）
-            if isHovering && !isSelected {
-                Text("双击查看数据")
-                    .font(.system(size: 10))
-                    .foregroundColor(AppColors.tertiaryText)
+            // 表 comment（淡灰色）
+            if let comment = tableInfo.comment, !comment.isEmpty {
+                Text(comment)
+                    .font(.system(size: 11))
+                    .foregroundColor(isSelected ? .white.opacity(0.7) : AppColors.tertiaryText)
+                    .lineLimit(1)
             }
+            
+            Spacer()
         }
-        .padding(.vertical, AppSpacing.sm)
-        .padding(.horizontal, AppSpacing.md)
+        .padding(.vertical, AppSpacing.xxs)
+        .padding(.horizontal, AppSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: AppRadius.md)
+            RoundedRectangle(cornerRadius: AppRadius.sm)
                 .fill(backgroundColor)
         )
         .foregroundColor(isSelected ? .white : AppColors.primaryText)

@@ -96,37 +96,37 @@ struct EditableResultsGridView: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
         scrollView.backgroundColor = NSColor.windowBackgroundColor
-        
+
         let tableView = EditableTableView()
         tableView.style = .plain
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
         tableView.allowsMultipleSelection = false
-        tableView.rowHeight = 24
-        tableView.intercellSpacing = NSSize(width: 1, height: 1)
+        tableView.rowHeight = 28  // 增加行高
+        tableView.intercellSpacing = NSSize(width: 2, height: 2)  // 增加单元格间距
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.15)
+        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.08)  // 更淡的网格线
         tableView.backgroundColor = NSColor.windowBackgroundColor
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
-        
+
         // 设置编辑模式
         tableView.isEditingEnabled = isEditable
-        
+
         // 设置代理和数据源
         let coordinator = context.coordinator
         tableView.delegate = coordinator
         tableView.dataSource = coordinator
         coordinator.tableView = tableView
-        
+
         // 配置列
         setupColumns(tableView: tableView, coordinator: coordinator)
-        
+
         // 配置右键菜单
         tableView.menu = createContextMenu(coordinator: coordinator)
-        
+
         scrollView.documentView = tableView
-        
+
         return scrollView
     }
     
@@ -171,12 +171,18 @@ struct EditableResultsGridView: NSViewRepresentable {
         for (index, columnName) in columns.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(columnName))
             column.title = columnName
-            column.width = 120
-            column.minWidth = 50
-            column.maxWidth = 500
+            column.width = 140  // 增加默认列宽
+            column.minWidth = 60
+            column.maxWidth = 600
             column.resizingMask = .userResizingMask
             column.isEditable = isEditable
             column.sortDescriptorPrototype = NSSortDescriptor(key: columnName, ascending: true)
+
+            // 表头样式优化
+            let headerCell = NSTableHeaderCell(textCell: columnName)
+            headerCell.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+            column.headerCell = headerCell
+
             coordinator.columnIndexMap[columnName] = index
             tableView.addTableColumn(column)
         }
@@ -241,7 +247,7 @@ struct EditableResultsGridView: NSViewRepresentable {
         weak var tableView: NSTableView?
         
         // 缓存
-        private let normalFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        private let normalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)  // 增大字体
         private let nullFont: NSFont
         private let normalColor = NSColor.labelColor
         private let nullColor = NSColor.tertiaryLabelColor

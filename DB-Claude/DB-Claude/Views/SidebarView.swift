@@ -35,23 +35,52 @@ struct SidebarView: View {
     @State private var editingConnection: Connection?
 
     var body: some View {
-        List(selection: $selection) {
-            Section("Connections") {
-                ForEach(connections) { connection in
-                    ConnectionRow(
-                        connection: connection,
-                        selection: $selection,
-                        editingConnection: $editingConnection
-                    )
-                }
-                .onDelete(perform: deleteConnections)
+        VStack(spacing: 0) {
+            // 渐变头部区域（更紧凑）
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DB-Claude")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+
+                Text("\(connections.count) 个连接")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.8))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, AppSpacing.md)
+            .padding(.vertical, AppSpacing.lg)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(hex: "667EEA"),  // 蓝紫色
+                        Color(hex: "764BA2")   // 紫色
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+            // 连接列表
+            List(selection: $selection) {
+                Section {
+                    ForEach(connections) { connection in
+                        ConnectionRow(
+                            connection: connection,
+                            selection: $selection,
+                            editingConnection: $editingConnection
+                        )
+                    }
+                    .onDelete(perform: deleteConnections)
+                }
+            }
+            .listStyle(.sidebar)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: { showingAddSheet = true }) {
-                    Label("Add Connection", systemImage: "plus")
+                    Label("添加连接", systemImage: "plus")
                 }
+                .buttonStyle(AppIconButtonStyle())
             }
         }
         .sheet(isPresented: $showingAddSheet) {
@@ -151,7 +180,7 @@ struct ConnectionRow: View {
         }
     }
 
-    // 连接行视图 - 扁平化设计
+    // 连接行视图 - 紧凑设计
     private var connectionRow: some View {
         HStack(spacing: AppSpacing.sm) {
             // 展开/折叠指示器
@@ -159,35 +188,41 @@ struct ConnectionRow: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(AppColors.tertiaryText)
                 .frame(width: 12)
-            
+                .animation(AppAnimation.fast, value: isExpanded)
+
             // 图标
             Image(systemName: SidebarIcons.database(for: connection.type))
                 .font(.system(size: 14))
                 .foregroundColor(iconColor)
-            
+                .symbolRenderingMode(.hierarchical)
+                .scaleEffect(isHovering ? 1.05 : 1.0)
+                .animation(AppAnimation.bouncy, value: isHovering)
+
             // 名称
             Text(connection.name)
-                .font(.system(size: 13, weight: highlightState == .selected ? .semibold : .regular))
+                .font(.system(size: 12, weight: highlightState == .selected ? .medium : .regular))
                 .lineLimit(1)
-            
+
             Spacer()
-            
+
             // 连接状态指示器
             connectionStatusIndicator
         }
-        .padding(.vertical, AppSpacing.sm)
+        .padding(.vertical, AppSpacing.xs)
         .padding(.horizontal, AppSpacing.sm)
         .background(connectionRowBackground)
         .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+        .scaleEffect(isHovering && highlightState == .none ? 1.01 : 1.0)
+        .animation(AppAnimation.fast, value: isHovering)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture(count: 2) {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(AppAnimation.medium) {
                 isExpanded.toggle()
             }
         }
         .onTapGesture(count: 1) {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(AppAnimation.fast) {
                 if selection != .connection(connection) {
                     selection = .connection(connection)
                 }
@@ -201,16 +236,16 @@ struct ConnectionRow: View {
             }) {
                 Label("重新连接", systemImage: "arrow.clockwise")
             }
-            
+
             Button(action: {
                 closeConnection()
             }) {
                 Label("关闭连接", systemImage: "xmark.circle")
             }
             .disabled(!isConnected && databases.isEmpty)
-            
+
             Divider()
-            
+
             Button(action: {
                 editingConnection = connection
             }) {
@@ -387,17 +422,17 @@ private struct DatabaseRow: View {
     var body: some View {
         HStack(spacing: AppSpacing.sm) {
             Image(systemName: SidebarIcons.folder)
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundColor(isSelected ? .white : AppColors.secondaryText)
-            
+
             Text(name)
-                .font(.system(size: 12, weight: isSelected ? .medium : .regular))
+                .font(isSelected ? AppTypography.captionMedium : AppTypography.caption)
                 .lineLimit(1)
-            
+
             Spacer()
         }
-        .padding(.vertical, AppSpacing.xs + 2)
-        .padding(.horizontal, AppSpacing.sm)
+        .padding(.vertical, AppSpacing.xs)
+        .padding(.horizontal, AppSpacing.md)
         .background(
             RoundedRectangle(cornerRadius: AppRadius.sm)
                 .fill(backgroundColor)

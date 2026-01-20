@@ -35,6 +35,15 @@ class MySQLDriver: DatabaseDriver {
         return ["users", "orders", "products (mock)"]
     }
     
+    func fetchTablesWithInfo() async throws -> [TableInfo] {
+        // 占位符实现，返回带 mock comment 的表信息
+        return [
+            TableInfo(name: "users", comment: "用户表"),
+            TableInfo(name: "orders", comment: "订单表"),
+            TableInfo(name: "products (mock)", comment: nil)
+        ]
+    }
+    
     func execute(sql: String) async throws -> [[String: String]] {
         // Return dummy result for "SELECT 1" or similar
         if sql.contains("SELECT 1") {

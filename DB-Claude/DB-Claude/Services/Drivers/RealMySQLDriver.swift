@@ -23,8 +23,14 @@ class RealMySQLDriver: DatabaseDriver {
     }
     
     deinit {
-        // deinit 中无法调用 async 方法，直接清理资源
-        // 注意：这可能导致警告，但不会崩溃
+        // 同步关闭连接，避免 MySQLNIO 的断言失败
+        if let client = client, !client.isClosed {
+            do {
+                try client.close().wait()
+            } catch {
+                print("[MySQL] deinit 关闭连接失败: \(error)")
+            }
+        }
         client = nil
         try? eventLoopGroup.syncShutdownGracefully()
     }
@@ -176,6 +182,41 @@ class RealMySQLDriver: DatabaseDriver {
                 // Use the first column definition to get the name
                 guard let firstColName = row.columnDefinitions.first?.name else { return nil }
                 return row.column(firstColName)?.string
+            }
+        }
+    }
+    
+    func fetchTablesWithInfo() async throws -> [TableInfo] {
+        return try await executeWithReconnect {
+            guard let client = self.client else { return [] }
+            
+            // 获取当前数据库名
+            let dbName = self.connection.databaseName ?? ""
+            guard !dbName.isEmpty else {
+                // 如果没有指定数据库，退回到只获取表名
+                let rows = try await client.query("SHOW TABLES").get()
+                return rows.compactMap { row in
+                    guard let firstColName = row.columnDefinitions.first?.name else { return nil }
+                    guard let tableName = row.column(firstColName)?.string else { return nil }
+                    return TableInfo(name: tableName, comment: nil)
+                }
+            }
+            
+            // 从 information_schema 查询表名和 comment
+            let sql = """
+                SELECT TABLE_NAME, TABLE_COMMENT 
+                FROM information_schema.TABLES 
+                WHERE TABLE_SCHEMA = '\(dbName)' 
+                ORDER BY TABLE_NAME
+                """
+            let rows = try await client.query(sql).get()
+            
+            return rows.compactMap { row in
+                guard let tableName = row.column("TABLE_NAME")?.string else { return nil }
+                let comment = row.column("TABLE_COMMENT")?.string
+                // 过滤掉空 comment
+                let validComment = (comment?.isEmpty == true) ? nil : comment
+                return TableInfo(name: tableName, comment: validComment)
             }
         }
     }
@@ -431,6 +472,7 @@ class RealMySQLDriver: DatabaseDriver {
     func disconnect() {}
     func fetchDatabases() async throws -> [String] { return [] }
     func fetchTables() async throws -> [String] { return [] }
+    func fetchTablesWithInfo() async throws -> [TableInfo] { return [] }
     func execute(sql: String) async throws -> [[String: String]] { return [] }
     func getDDL(for table: String) async throws -> String { return "" }
 }

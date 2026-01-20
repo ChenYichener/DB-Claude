@@ -155,8 +155,10 @@ struct SQLTextView: NSViewRepresentable {
         func executeQuery() {
             if let selectedText = getSelectedText(), !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 parent.onExecuteSelected?(selectedText)
+                parent.onShowToast?("执行选中的 SQL (⌘↩)")
             } else {
                 parent.onExecute?()
+                parent.onShowToast?("执行查询 (⌘↩)")
             }
         }
         
@@ -553,48 +555,336 @@ struct SQLTextView: NSViewRepresentable {
             return (word, range)
         }
         
-        private func generateCompletions(for prefix: String) -> [CompletionItem] {
-            var items: [CompletionItem] = []
-            let lowercasedPrefix = prefix.lowercased()
+        // MARK: - 上下文感知补全
+        
+        /// SQL 上下文类型
+        enum SQLContext {
+            case table          // 需要表名（FROM、JOIN、UPDATE、INTO、ALTER TABLE 等后面）
+            case column         // 需要字段名（SELECT、WHERE、ORDER BY、SET 等后面）
+            case keyword        // 需要关键字（语句开头或特定位置）
+            case mixed          // 混合模式（无法确定时）
+        }
+        
+        /// 分析当前 SQL 上下文
+        private func analyzeContext() -> (context: SQLContext, contextTables: [String]) {
+            guard let textView = textView else { return (.mixed, []) }
             
-            // 添加关键字补全
-            for keyword in SQLSyntax.keywords {
-                if keyword.lowercased().hasPrefix(lowercasedPrefix) {
-                    items.append(CompletionItem(text: keyword, type: .keyword))
-                }
-            }
+            let text = textView.string
+            let cursorLocation = textView.selectedRange().location
             
-            // 添加函数补全
-            for function in SQLSyntax.functions {
-                if function.lowercased().hasPrefix(lowercasedPrefix) {
-                    items.append(CompletionItem(text: function + "()", type: .function))
-                }
-            }
+            // 获取光标前的文本
+            let textBeforeCursor = String(text.prefix(cursorLocation))
+            let upperText = textBeforeCursor.uppercased()
             
-            // 添加表名补全
-            for table in tables {
-                if table.lowercased().hasPrefix(lowercasedPrefix) {
-                    items.append(CompletionItem(text: table, type: .table))
-                }
-            }
+            // 从 SQL 中提取所有出现的表名
+            let contextTables = extractTablesFromSQL(text)
             
-            // 添加字段名补全
-            for (tableName, cols) in columns {
-                for col in cols {
-                    if col.lowercased().hasPrefix(lowercasedPrefix) {
-                        items.append(CompletionItem(text: col, type: .column, detail: tableName))
+            // 逆序查找最近的关键字来判断上下文
+            // 关键字模式：需要表名的关键字
+            let tableKeywords = ["FROM ", "JOIN ", "UPDATE ", "INTO ", "TABLE ", "TRUNCATE "]
+            // 需要字段名的关键字
+            let columnKeywords = ["SELECT ", "WHERE ", "AND ", "OR ", "ORDER BY ", "GROUP BY ", 
+                                   "HAVING ", "SET ", "ON ", "USING ", "VALUES "]
+            // 语句开始关键字
+            let statementKeywords = ["SELECT", "UPDATE", "DELETE", "INSERT", "CREATE", "ALTER", 
+                                      "DROP", "TRUNCATE", "EXPLAIN", "WITH"]
+            
+            // 从光标位置向前查找最近的关键字
+            var lastTableKeywordPos = -1
+            var lastColumnKeywordPos = -1
+            var lastStatementKeywordPos = -1
+            
+            for keyword in tableKeywords {
+                if let range = upperText.range(of: keyword, options: .backwards) {
+                    let pos = upperText.distance(from: upperText.startIndex, to: range.upperBound)
+                    if pos > lastTableKeywordPos {
+                        lastTableKeywordPos = pos
                     }
                 }
             }
             
-            // 按类型和名称排序：表名/字段名优先，然后是关键字和函数
-            items.sort { a, b in
-                let aIsSchema = a.type == .table || a.type == .column
-                let bIsSchema = b.type == .table || b.type == .column
-                if aIsSchema != bIsSchema {
-                    return aIsSchema
+            for keyword in columnKeywords {
+                if let range = upperText.range(of: keyword, options: .backwards) {
+                    let pos = upperText.distance(from: upperText.startIndex, to: range.upperBound)
+                    if pos > lastColumnKeywordPos {
+                        lastColumnKeywordPos = pos
+                    }
                 }
+            }
+            
+            // 检查是否在语句开头（空或只有空白）
+            let trimmedText = textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedText.isEmpty {
+                return (.keyword, contextTables)
+            }
+            
+            // 检查最后一个字符是否是分号（新语句开始）
+            if trimmedText.hasSuffix(";") {
+                return (.keyword, contextTables)
+            }
+            
+            // 检查是否在括号内（可能是 VALUES 或子查询）
+            let openParens = textBeforeCursor.filter { $0 == "(" }.count
+            let closeParens = textBeforeCursor.filter { $0 == ")" }.count
+            let inParens = openParens > closeParens
+            
+            // 检查是否紧跟在逗号后面（字段列表中）
+            let textAfterLastKeyword = getTextAfterLastMajorKeyword(upperText)
+            if textAfterLastKeyword.contains(",") {
+                // 在逗号列表中，沿用上一个上下文
+                if lastTableKeywordPos > lastColumnKeywordPos {
+                    return (.table, contextTables)
+                } else if lastColumnKeywordPos > lastTableKeywordPos {
+                    return (.column, contextTables)
+                }
+            }
+            
+            // 根据最近的关键字判断上下文
+            if lastTableKeywordPos > lastColumnKeywordPos && lastTableKeywordPos > 0 {
+                // 检查 FROM/JOIN 后面是否已经有表名了
+                let textAfterTable = String(upperText.suffix(from: upperText.index(upperText.startIndex, offsetBy: lastTableKeywordPos)))
+                // 如果已经有完整的表名（后面有空格），可能需要字段
+                let words = textAfterTable.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if words.count >= 1 {
+                    // 检查第一个词是否是表名
+                    let firstWord = words[0].lowercased()
+                    if tables.contains(where: { $0.lowercased() == firstWord }) {
+                        // 表名后面，可能需要关键字或字段
+                        if words.count == 1 && !textAfterTable.hasSuffix(" ") {
+                            // 还在输入表名
+                            return (.table, contextTables)
+                        }
+                        return (.mixed, contextTables)
+                    }
+                }
+                return (.table, contextTables)
+            } else if lastColumnKeywordPos > lastTableKeywordPos && lastColumnKeywordPos > 0 {
+                return (.column, contextTables)
+            }
+            
+            // 检查语句开头
+            for keyword in statementKeywords {
+                if trimmedText.uppercased() == keyword || 
+                   trimmedText.uppercased().hasPrefix(keyword) {
+                    // 在关键字本身或之后
+                    let afterKeyword = String(trimmedText.dropFirst(keyword.count)).trimmingCharacters(in: .whitespaces)
+                    if afterKeyword.isEmpty {
+                        // 关键字后面，判断下一步
+                        if keyword == "SELECT" {
+                            return (.column, contextTables)
+                        } else if keyword == "FROM" || keyword == "UPDATE" || keyword == "INTO" {
+                            return (.table, contextTables)
+                        }
+                    }
+                }
+            }
+            
+            // 默认混合模式
+            return (.mixed, contextTables)
+        }
+        
+        /// 从 SQL 中提取所有表名
+        private func extractTablesFromSQL(_ sql: String) -> [String] {
+            var foundTables: [String] = []
+            let upperSQL = sql.uppercased()
+            
+            // 查找 FROM、JOIN、UPDATE、INTO 后面的表名
+            let patterns = [
+                "FROM\\s+([\\w`\"]+)",
+                "JOIN\\s+([\\w`\"]+)",
+                "UPDATE\\s+([\\w`\"]+)",
+                "INTO\\s+([\\w`\"]+)"
+            ]
+            
+            for pattern in patterns {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                    let nsSQL = sql as NSString
+                    let matches = regex.matches(in: sql, range: NSRange(location: 0, length: nsSQL.length))
+                    
+                    for match in matches {
+                        if match.numberOfRanges > 1 {
+                            let tableRange = match.range(at: 1)
+                            var tableName = nsSQL.substring(with: tableRange)
+                            // 去除引号
+                            tableName = tableName.trimmingCharacters(in: CharacterSet(charactersIn: "`\""))
+                            // 验证是否是真实的表名
+                            if tables.contains(where: { $0.lowercased() == tableName.lowercased() }) {
+                                if !foundTables.contains(where: { $0.lowercased() == tableName.lowercased() }) {
+                                    foundTables.append(tableName)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return foundTables
+        }
+        
+        /// 获取最后一个主要关键字后的文本
+        private func getTextAfterLastMajorKeyword(_ text: String) -> String {
+            let keywords = ["SELECT ", "FROM ", "WHERE ", "JOIN ", "AND ", "OR ", 
+                            "ORDER BY ", "GROUP BY ", "SET ", "VALUES "]
+            var lastPos = 0
+            
+            for keyword in keywords {
+                if let range = text.range(of: keyword, options: .backwards) {
+                    let pos = text.distance(from: text.startIndex, to: range.upperBound)
+                    if pos > lastPos {
+                        lastPos = pos
+                    }
+                }
+            }
+            
+            if lastPos > 0 && lastPos < text.count {
+                return String(text.suffix(from: text.index(text.startIndex, offsetBy: lastPos)))
+            }
+            return text
+        }
+        
+        private func generateCompletions(for prefix: String) -> [CompletionItem] {
+            var items: [CompletionItem] = []
+            let lowercasedPrefix = prefix.lowercased()
+            
+            // 分析上下文
+            let (context, contextTables) = analyzeContext()
+            
+            switch context {
+            case .table:
+                // 只提示表名
+                for table in tables {
+                    if table.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: table, type: .table))
+                    }
+                }
+                
+            case .column:
+                // 优先提示上下文中表的字段
+                if !contextTables.isEmpty {
+                    // 先添加上下文表的字段
+                    for tableName in contextTables {
+                        if let cols = columns[tableName] {
+                            for col in cols {
+                                if col.lowercased().hasPrefix(lowercasedPrefix) {
+                                    items.append(CompletionItem(text: col, type: .column, detail: tableName))
+                                }
+                            }
+                        }
+                        // 也尝试不区分大小写匹配表名
+                        for (tbl, cols) in columns {
+                            if tbl.lowercased() == tableName.lowercased() && tbl != tableName {
+                                for col in cols {
+                                    if col.lowercased().hasPrefix(lowercasedPrefix) {
+                                        let exists = items.contains { $0.text == col && $0.detail == tbl }
+                                        if !exists {
+                                            items.append(CompletionItem(text: col, type: .column, detail: tbl))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 没有明确的表，显示所有字段
+                    for (tableName, cols) in columns {
+                        for col in cols {
+                            if col.lowercased().hasPrefix(lowercasedPrefix) {
+                                items.append(CompletionItem(text: col, type: .column, detail: tableName))
+                            }
+                        }
+                    }
+                }
+                
+                // 也添加函数（在 SELECT 中常用）
+                for function in SQLSyntax.functions {
+                    if function.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: function + "()", type: .function))
+                    }
+                }
+                
+            case .keyword:
+                // 只提示关键字
+                for keyword in SQLSyntax.keywords {
+                    if keyword.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: keyword, type: .keyword))
+                    }
+                }
+                
+            case .mixed:
+                // 混合模式：全部提示，但按优先级排序
+                
+                // 1. 添加关键字
+                for keyword in SQLSyntax.keywords {
+                    if keyword.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: keyword, type: .keyword))
+                    }
+                }
+                
+                // 2. 添加函数
+                for function in SQLSyntax.functions {
+                    if function.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: function + "()", type: .function))
+                    }
+                }
+                
+                // 3. 添加表名
+                for table in tables {
+                    if table.lowercased().hasPrefix(lowercasedPrefix) {
+                        items.append(CompletionItem(text: table, type: .table))
+                    }
+                }
+                
+                // 4. 添加上下文表的字段
+                if !contextTables.isEmpty {
+                    for tableName in contextTables {
+                        if let cols = columns[tableName] {
+                            for col in cols {
+                                if col.lowercased().hasPrefix(lowercasedPrefix) {
+                                    items.append(CompletionItem(text: col, type: .column, detail: tableName))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 所有字段
+                    for (tableName, cols) in columns {
+                        for col in cols {
+                            if col.lowercased().hasPrefix(lowercasedPrefix) {
+                                items.append(CompletionItem(text: col, type: .column, detail: tableName))
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 排序：按类型优先级
+            items.sort { a, b in
+                // 在 column 模式下，字段优先
+                if context == .column {
+                    if a.type == .column && b.type != .column { return true }
+                    if a.type != .column && b.type == .column { return false }
+                }
+                // 在 table 模式下，表优先
+                if context == .table {
+                    if a.type == .table && b.type != .table { return true }
+                    if a.type != .table && b.type == .table { return false }
+                }
+                // 在 keyword 模式下，关键字优先
+                if context == .keyword {
+                    if a.type == .keyword && b.type != .keyword { return true }
+                    if a.type != .keyword && b.type == .keyword { return false }
+                }
+                // 同类型按字母排序
                 return a.text.lowercased() < b.text.lowercased()
+            }
+            
+            // 去重
+            var seen = Set<String>()
+            items = items.filter { item in
+                let key = "\(item.text)_\(item.type)"
+                if seen.contains(key) { return false }
+                seen.insert(key)
+                return true
             }
             
             // 限制数量
@@ -672,6 +962,106 @@ protocol CompletionDelegate: AnyObject {
 // MARK: - 自定义 NSTextView
 class SQLEditorTextView: NSTextView {
     weak var completionDelegate: SQLTextView.Coordinator?
+    
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        setupDragAndDrop()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupDragAndDrop()
+    }
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupDragAndDrop()
+    }
+    
+    private func setupDragAndDrop() {
+        // 注册接收拖拽类型
+        registerForDraggedTypes([.string, NSPasteboard.PasteboardType("public.utf8-plain-text")])
+    }
+    
+    // MARK: - 拖放支持
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // 检查是否包含字符串数据
+        if sender.draggingPasteboard.availableType(from: [.string, NSPasteboard.PasteboardType("public.utf8-plain-text")]) != nil {
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+    
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if sender.draggingPasteboard.availableType(from: [.string, NSPasteboard.PasteboardType("public.utf8-plain-text")]) != nil {
+            // 更新光标位置到拖拽位置
+            let point = convert(sender.draggingLocation, from: nil)
+            if let layoutManager = layoutManager, let textContainer = textContainer {
+                let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+                let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+                setSelectedRange(NSRange(location: charIndex, length: 0))
+            }
+            return .copy
+        }
+        return super.draggingUpdated(sender)
+    }
+    
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        
+        // 尝试读取字符串
+        if let droppedString = pasteboard.string(forType: .string) ?? pasteboard.string(forType: NSPasteboard.PasteboardType("public.utf8-plain-text")) {
+            // 获取拖拽位置对应的字符索引
+            let point = convert(sender.draggingLocation, from: nil)
+            var insertIndex = string.count
+            
+            if let layoutManager = layoutManager, let textContainer = textContainer {
+                let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+                insertIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            }
+            
+            // 准备插入的文本（如果不在开头或结尾，添加换行符）
+            var textToInsert = droppedString.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // 智能插入：检查插入位置前后是否需要换行
+            let currentText = string as NSString
+            if insertIndex > 0 && insertIndex < currentText.length {
+                let charBefore = currentText.character(at: insertIndex - 1)
+                if charBefore != 10 && charBefore != 13 { // 不是换行符
+                    textToInsert = "\n" + textToInsert
+                }
+            }
+            
+            if insertIndex < currentText.length {
+                let charAfter = currentText.character(at: insertIndex)
+                if charAfter != 10 && charAfter != 13 { // 不是换行符
+                    textToInsert = textToInsert + "\n"
+                }
+            }
+            
+            // 插入文本
+            let insertRange = NSRange(location: insertIndex, length: 0)
+            if let textStorage = textStorage {
+                textStorage.beginEditing()
+                textStorage.replaceCharacters(in: insertRange, with: textToInsert)
+                textStorage.endEditing()
+                
+                // 更新光标位置到插入文本末尾
+                let newCursorPos = insertIndex + textToInsert.count
+                setSelectedRange(NSRange(location: newCursorPos, length: 0))
+                
+                // 通知 coordinator 更新
+                if let coordinator = completionDelegate {
+                    coordinator.parent.text = string
+                    coordinator.applyHighlighting()
+                }
+            }
+            
+            return true
+        }
+        
+        return super.performDragOperation(sender)
+    }
     
     override func keyDown(with event: NSEvent) {
         // 让 delegate 先处理
