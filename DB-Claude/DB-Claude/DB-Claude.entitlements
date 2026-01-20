@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 允许网络出站连接（用于 MySQL、PostgreSQL 等数据库连接） -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- 如果需要接受入站连接（未来可能用于本地服务器），取消注释以下内容 -->
+	<!--
+	<key>com.apple.security.network.server</key>
+	<true/>
+	-->
+
+	<!-- 允许读取用户选中的文件（用于 SQLite 文件选择器） -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+
+	<!-- 允许读写用户选中的文件（用于 SQLite 导出等功能） -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>
