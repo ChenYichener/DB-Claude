@@ -3,6 +3,8 @@
 .AppleDouble
 .LSOverride
 ._*
+.cursor/
+.claude/
 
 # Xcode
 xcuserdata/
@@ -58,10 +60,12 @@ secrets.json
 *.swp
 *.swo
 
-# Archives
+# Archives & Distribution
 *.ipa
 *.dSYM.zip
 *.dSYM
+*.dmg
+dist/
 
 # Playground
 timeline.xctimeline

@@ -1,0 +1,130 @@
+# =============================================================================
+# GitHub Actions: 自动构建并发布 DMG 到 GitHub Release
+# =============================================================================
+# 触发方式:
+#   1. 推送 tag (如 v1.0.0) 时自动触发
+#   2. 手动触发 (Actions -> Release -> Run workflow)
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送 v 开头的 tag 时触发
+  workflow_dispatch:  # 支持手动触发
+    inputs:
+      version:
+        description: '版本号 (如 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    name: 构建并发布
+    runs-on: macos-14  # 使用 macOS 14 (Sonoma) runner，支持最新 Xcode
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      
+      - name: 获取版本号
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "版本号: $VERSION"
+      
+      - name: 构建 Release 版本
+        run: |
+          xcodebuild -project DB-Claude/DB-Claude.xcodeproj \
+            -scheme DB-Claude \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            -destination "generic/platform=macOS" \
+            ONLY_ACTIVE_ARCH=NO \
+            clean build
+      
+      - name: 创建 DMG
+        run: |
+          # 查找构建产物
+          APP_PATH=$(find build/DerivedData -name "DB-Claude.app" -type d | head -1)
+          echo "App 路径: $APP_PATH"
+          
+          # 创建 DMG 临时目录
+          mkdir -p dist dmg-staging
+          cp -R "$APP_PATH" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          
+          # 创建 DMG
+          VERSION=${{ steps.version.outputs.version }}
+          DMG_NAME="DB-Claude-$VERSION.dmg"
+          
+          hdiutil create -srcfolder dmg-staging \
+            -volname "DB-Claude" \
+            -fs HFS+ \
+            -format UDZO \
+            -imagekey zlib-level=9 \
+            "dist/$DMG_NAME"
+          
+          echo "dmg_path=dist/$DMG_NAME" >> $GITHUB_OUTPUT
+          echo "dmg_name=$DMG_NAME" >> $GITHUB_OUTPUT
+          
+          # 显示文件信息
+          ls -lh dist/
+        id: dmg
+      
+      - name: 计算校验和
+        id: checksum
+        run: |
+          cd dist
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: DB-Claude v${{ steps.version.outputs.version }}
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          draft: true  # 创建草稿，可以在发布前编辑
+          generate_release_notes: true  # 自动生成 Release Notes
+          files: |
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+          body: |
+            ## DB-Claude v${{ steps.version.outputs.version }}
+            
+            ### 安装说明
+            
+            1. 下载 `DB-Claude-${{ steps.version.outputs.version }}.dmg`
+            2. 打开 DMG 文件
+            3. 将 DB-Claude 拖入 Applications 文件夹
+            4. 首次打开时，右键点击选择"打开"以绕过 Gatekeeper
+            
+            ### 系统要求
+            
+            - macOS 15.7 (Sequoia) 或更高版本
+            
+            ### 校验和 (SHA-256)
+            
+            ```
+            $(cat dist/SHA256SUMS.txt)
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: DB-Claude-${{ steps.version.outputs.version }}
+          path: dist/
+          retention-days: 7
