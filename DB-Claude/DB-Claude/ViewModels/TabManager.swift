@@ -22,6 +22,7 @@ struct WorkspaceTab: Identifiable, Equatable {
     var title: String
     var type: TabType
     var connectionId: UUID // Tab belongs to a connection context? Or Global? usually connection context.
+    var databaseName: String = ""  // 当前选择的数据库名
     var isRenamable: Bool { type.isQuery }  // 只有查询 tab 可以重命名
 }
 
@@ -48,16 +49,23 @@ class TabManager {
         }
     }
     
-    func addQueryTab(connectionId: UUID) {
+    func addQueryTab(connectionId: UUID, databaseName: String = "") {
         let count = tabs.filter { if case .query = $0.type { return true } else { return false } }.count + 1
         let tab = WorkspaceTab(
             id: UUID(),
             title: "Query \(count)",
             type: .query,
-            connectionId: connectionId
+            connectionId: connectionId,
+            databaseName: databaseName
         )
         tabs.append(tab)
         activeTabId = tab.id
+    }
+    
+    /// 更新 tab 的数据库
+    func updateTabDatabase(id: UUID, databaseName: String) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[index].databaseName = databaseName
     }
     
     func openStructureTab(table: String, connectionId: UUID) {
@@ -80,7 +88,7 @@ class TabManager {
         activeTabId = tab.id
     }
 
-    func openDataTab(table: String, connectionId: UUID) {
+    func openDataTab(table: String, connectionId: UUID, databaseName: String = "") {
         print("[TabManager] openDataTab 被调用: table=\(table), connectionId=\(connectionId)")
 
         // 检查是否已存在，如果存在则激活
@@ -98,7 +106,8 @@ class TabManager {
             id: UUID(),
             title: "\(table) (数据)",
             type: .data(table),
-            connectionId: connectionId
+            connectionId: connectionId,
+            databaseName: databaseName
         )
         tabs.append(tab)
         activeTabId = tab.id

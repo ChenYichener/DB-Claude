@@ -1,9 +1,24 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Focused Value Key（用于菜单栏访问）
+struct ShowAddConnectionKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+extension FocusedValues {
+    var showAddConnection: Binding<Bool>? {
+        get { self[ShowAddConnectionKey.self] }
+        set { self[ShowAddConnectionKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @State private var tabManager = TabManager()
     @State private var inspectorIsPresented: Bool = true // 默认显示历史 SQL 面板
+    
+    // 新增连接弹窗状态（提升到 ContentView 以便菜单栏访问）
+    @State private var showingAddConnection: Bool = false
 
     // Sidebar state
     @State private var selection: SidebarSelection?
@@ -40,7 +55,7 @@ struct ContentView: View {
     
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $selection)
+            SidebarView(selection: $selection, showingAddConnection: $showingAddConnection)
                 .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } content: {
             if let selection = selection {
@@ -125,7 +140,7 @@ struct ContentView: View {
                                                 Task { await showDDLForTable(tableInfo.name, connection: connection) }
                                             },
                                             onDoubleTap: {
-                                                tabManager.openDataTab(table: tableInfo.name, connectionId: connection.id)
+                                                tabManager.openDataTab(table: tableInfo.name, connectionId: connection.id, databaseName: dbName)
                                             }
                                         )
                                     }
@@ -145,7 +160,7 @@ struct ContentView: View {
                     }
                     .toolbar {
                         Button(action: {
-                            tabManager.addQueryTab(connectionId: connection.id)
+                            tabManager.addQueryTab(connectionId: connection.id, databaseName: dbName)
                         }) {
                             Label("New Query", systemImage: "plus.square.on.square")
                         }
@@ -187,7 +202,8 @@ struct ContentView: View {
                                 onAddTab: {
                                     if let sel = selection {
                                         let conn = extractConnection(from: sel)
-                                        tabManager.addQueryTab(connectionId: conn.id)
+                                        let dbName = extractDatabaseName(from: sel)
+                                        tabManager.addQueryTab(connectionId: conn.id, databaseName: dbName)
                                     }
                                 }
                             )
@@ -202,7 +218,8 @@ struct ContentView: View {
                                 TabContentWrapper(
                                     tab: tab,
                                     currentDriver: currentDriver,
-                                    connectionId: tab.connectionId
+                                    connectionId: tab.connectionId,
+                                    tabManager: tabManager
                                 )
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                                 .opacity(tabManager.activeTabId == tab.id ? 1 : 0)
@@ -246,6 +263,12 @@ struct ContentView: View {
             .opacity(0)
             .allowsHitTesting(false) // 确保不会拦截点击事件
         )
+        // 暴露给菜单栏，使菜单可以控制新增连接弹窗
+        .focusedValue(\.showAddConnection, $showingAddConnection)
+        // 新增连接弹窗
+        .sheet(isPresented: $showingAddConnection) {
+            ConnectionFormView()
+        }
     }
     
     /// 切换到指定索引的查询标签页
@@ -276,6 +299,13 @@ struct ContentView: View {
         return extractConnection(from: s).id
     }
     
+    private func extractDatabaseName(from selection: SidebarSelection) -> String {
+        switch selection {
+        case .connection: return ""
+        case .database(_, let dbName): return dbName
+        }
+    }
+    
     private func loadTables(for connection: Connection, database: String) async {
         tables = []
         errorMessage = nil
@@ -291,6 +321,8 @@ struct ContentView: View {
             guard let driver = createDriver(for: connection) else { return }
             currentDriver = driver
             try await driver.connect()
+            // 切换到用户选择的数据库
+            try await driver.useDatabase(database)
             tables = try await driver.fetchTablesWithInfo()
             
             // 加载每个表的字段信息（用于拖拽生成字段列表）
@@ -312,7 +344,7 @@ struct ContentView: View {
                     tab.connectionId == connection.id && tab.type == .query
                 }
                 if !hasQueryTab {
-                    tabManager.addQueryTab(connectionId: connection.id)
+                    tabManager.addQueryTab(connectionId: connection.id, databaseName: database)
                 }
             }
         } catch {
@@ -372,6 +404,7 @@ struct TabContentWrapper: View {
     let tab: WorkspaceTab
     let currentDriver: (any DatabaseDriver)?
     let connectionId: UUID
+    @Bindable var tabManager: TabManager
 
     @Query private var connections: [Connection]
     @State private var tabDriver: (any DatabaseDriver)?
@@ -380,7 +413,12 @@ struct TabContentWrapper: View {
         if let connection = connections.first(where: { $0.id == connectionId }) {
             switch tab.type {
             case .query:
-                QueryEditorView(connection: connection)
+                QueryEditorView(
+                    connection: connection,
+                    tabId: tab.id,
+                    initialDatabase: tab.databaseName,
+                    tabManager: tabManager
+                )
             case .structure(let table):
                 if let driver = currentDriver {
                     StructureView(table: table, driver: driver)
@@ -391,7 +429,8 @@ struct TabContentWrapper: View {
                 DataTabView(
                     table: table,
                     connection: connection,
-                    initialDriver: currentDriver
+                    initialDriver: currentDriver,
+                    databaseName: tab.databaseName
                 )
             }
         } else {
@@ -405,6 +444,7 @@ struct DataTabView: View {
     let table: String
     let connection: Connection
     let initialDriver: (any DatabaseDriver)?
+    var databaseName: String = ""
 
     @State private var driver: (any DatabaseDriver)?
     @State private var isLoading: Bool = true
@@ -474,6 +514,10 @@ struct DataTabView: View {
 
         do {
             try await newDriver.connect()
+            // 切换到指定的数据库
+            if !databaseName.isEmpty {
+                try await newDriver.useDatabase(databaseName)
+            }
             await MainActor.run {
                 self.driver = newDriver
                 self.isLoading = false

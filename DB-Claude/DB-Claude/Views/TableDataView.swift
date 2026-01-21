@@ -1229,6 +1229,7 @@ struct SQLStatementRow: View {
 struct MockDriver: DatabaseDriver {
     func connect() async throws {}
     func disconnect() async {}
+    func useDatabase(_ database: String) async throws {}
     func fetchDatabases() async throws -> [String] { [] }
     func fetchTables() async throws -> [String] { [] }
     func fetchTablesWithInfo() async throws -> [TableInfo] { [] }

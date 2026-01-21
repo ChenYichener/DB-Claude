@@ -44,7 +44,9 @@ class RealMySQLDriver: DatabaseDriver {
         let port = connection.port ?? 3306
         // 从 Keychain 获取密码
         let password = connection.getSecurePassword() ?? ""
-        let database = connection.databaseName ?? ""
+        // 如果未指定数据库，使用 information_schema（所有 MySQL 实例都有此库）
+        let userDatabase = connection.databaseName ?? ""
+        let database = userDatabase.isEmpty ? "information_schema" : userDatabase
 
         // 诊断日志：输出连接参数
         print("[MySQL] 正在连接...")
@@ -52,7 +54,7 @@ class RealMySQLDriver: DatabaseDriver {
         print("[MySQL] 端口: \(port)")
         print("[MySQL] 用户: \(username)")
         print("[MySQL] 密码: \(password.isEmpty ? "(空)" : "(已设置，来自 Keychain)")")
-        print("[MySQL] 数据库: \(database.isEmpty ? "(未指定)" : database)")
+        print("[MySQL] 数据库: \(userDatabase.isEmpty ? "(未指定，使用 information_schema)" : userDatabase)")
 
         // Basic configuration
         let socketAddress = try SocketAddress.makeAddressResolvingHost(host, port: port)
@@ -77,6 +79,25 @@ class RealMySQLDriver: DatabaseDriver {
         if let client = client {
             try? await client.close().get()
             self.client = nil
+        }
+    }
+    
+    /// 当前使用的数据库名（用户选择的，非连接配置中的）
+    private var currentDatabase: String = ""
+    
+    func useDatabase(_ database: String) async throws {
+        guard !database.isEmpty else { return }
+        guard let client = self.client else { throw DatabaseError.notConnected }
+        
+        do {
+            // 使用 simpleQuery 执行 USE 语句（不返回结果集）
+            _ = try await client.simpleQuery("USE `\(database)`").get()
+            self.currentDatabase = database
+            print("[MySQL] 已切换到数据库: \(database)")
+        } catch {
+            print("[MySQL] 切换数据库失败: \(error)")
+            // 即使 USE 失败，也设置 currentDatabase，让后续查询使用完整表名
+            self.currentDatabase = database
         }
     }
     
@@ -191,8 +212,8 @@ class RealMySQLDriver: DatabaseDriver {
         return try await executeWithReconnect {
             guard let client = self.client else { return [] }
             
-            // 获取当前数据库名
-            let dbName = self.connection.databaseName ?? ""
+            // 使用当前选择的数据库，如果没有则使用连接配置中的
+            let dbName = self.currentDatabase.isEmpty ? (self.connection.databaseName ?? "") : self.currentDatabase
             guard !dbName.isEmpty else {
                 // 如果没有指定数据库，退回到只获取表名
                 let rows = try await client.query("SHOW TABLES").get()
@@ -226,8 +247,8 @@ class RealMySQLDriver: DatabaseDriver {
         return try await executeWithReconnect {
             guard let client = self.client else { return [] }
             
-            // 获取当前数据库名
-            let dbName = self.connection.databaseName ?? ""
+            // 使用当前选择的数据库，如果没有则使用连接配置中的
+            let dbName = self.currentDatabase.isEmpty ? (self.connection.databaseName ?? "") : self.currentDatabase
             guard !dbName.isEmpty else { return [] }
             
             // 从 information_schema 查询字段名和 comment
@@ -499,6 +520,7 @@ class RealMySQLDriver: DatabaseDriver {
     }
     
     func disconnect() {}
+    func useDatabase(_ database: String) async throws {}
     func fetchDatabases() async throws -> [String] { return [] }
     func fetchTables() async throws -> [String] { return [] }
     func fetchTablesWithInfo() async throws -> [TableInfo] { return [] }

@@ -26,6 +26,10 @@ class MySQLDriver: DatabaseDriver {
         // No-op for skeleton
     }
     
+    func useDatabase(_ database: String) async throws {
+        // No-op for skeleton
+    }
+    
     func fetchDatabases() async throws -> [String] {
         return ["information_schema", "mysql", "performance_schema", "sys", "test_db"]
     }

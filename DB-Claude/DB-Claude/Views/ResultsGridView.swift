@@ -77,18 +77,15 @@ struct EditableResultsGridView: NSViewRepresentable {
             self.rowData = dataRows.map { row in cols.map { col in row[col] } }
             // 使用更可靠的 hash：基于数据内容而不仅仅是行数
             self.dataHash = Self.computeDataHash(rowData: self.rowData)
-            print("[ResultsGrid] init: 使用 __columns__ 元数据, columns=\(cols.count), dataRows=\(dataRows.count), hash=\(self.dataHash)")
         } else if let first = results.first {
             let cols = first.keys.sorted()
             self.columns = cols
             self.rowData = results.map { row in cols.map { col in row[col] } }
             self.dataHash = Self.computeDataHash(rowData: self.rowData)
-            print("[ResultsGrid] init: 使用 keys, columns=\(cols.count), rows=\(results.count), hash=\(self.dataHash)")
         } else {
             self.columns = []
             self.rowData = []
             self.dataHash = 0
-            print("[ResultsGrid] init: 空结果")
         }
     }
     

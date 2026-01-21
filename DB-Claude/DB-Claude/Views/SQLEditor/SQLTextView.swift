@@ -959,28 +959,343 @@ protocol CompletionDelegate: AnyObject {
     func didSelectItem(_ item: CompletionItem)
 }
 
-// MARK: - 自定义 NSTextView
+// MARK: - 自定义 NSTextView（支持多光标/列编辑）
 class SQLEditorTextView: NSTextView {
     weak var completionDelegate: SQLTextView.Coordinator?
     
+    // 多光标支持
+    private var additionalCursors: [NSRange] = []  // 额外的光标位置
+    private var isColumnSelecting: Bool = false     // 是否在列选择模式
+    private var columnSelectionAnchor: NSPoint?     // 列选择的起始点
+    
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)
-        setupDragAndDrop()
+        setupEditor()
     }
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setupDragAndDrop()
+        setupEditor()
     }
     
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        setupDragAndDrop()
+        setupEditor()
     }
     
-    private func setupDragAndDrop() {
+    private func setupEditor() {
         // 注册接收拖拽类型
         registerForDraggedTypes([.string, NSPasteboard.PasteboardType("public.utf8-plain-text")])
+        // 启用矩形选择支持
+        isAutomaticQuoteSubstitutionEnabled = false
+        isAutomaticDashSubstitutionEnabled = false
+    }
+    
+    // MARK: - 列选择（Option + 鼠标拖动）
+    
+    override func mouseDown(with event: NSEvent) {
+        // Option + 点击：添加额外光标
+        if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.shift) {
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = characterIndex(for: point) {
+                // 添加新光标
+                additionalCursors.append(NSRange(location: index, length: 0))
+                setNeedsDisplay(bounds)
+                return
+            }
+        }
+        
+        // Option + Shift + 拖动：开始列选择
+        if event.modifierFlags.contains(.option) && event.modifierFlags.contains(.shift) {
+            isColumnSelecting = true
+            columnSelectionAnchor = convert(event.locationInWindow, from: nil)
+            additionalCursors.removeAll()
+        } else {
+            // 普通点击，清除额外光标
+            if !event.modifierFlags.contains(.option) {
+                additionalCursors.removeAll()
+            }
+        }
+        
+        super.mouseDown(with: event)
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        if isColumnSelecting, let anchor = columnSelectionAnchor {
+            let currentPoint = convert(event.locationInWindow, from: nil)
+            updateColumnSelection(from: anchor, to: currentPoint)
+            return
+        }
+        
+        // Option + 拖动：创建矩形选择
+        if event.modifierFlags.contains(.option) {
+            let point = convert(event.locationInWindow, from: nil)
+            if columnSelectionAnchor == nil {
+                columnSelectionAnchor = point
+            }
+            updateColumnSelection(from: columnSelectionAnchor!, to: point)
+            return
+        }
+        
+        super.mouseDragged(with: event)
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        isColumnSelecting = false
+        columnSelectionAnchor = nil
+        super.mouseUp(with: event)
+    }
+    
+    /// 更新列选择
+    private func updateColumnSelection(from startPoint: NSPoint, to endPoint: NSPoint) {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer else { return }
+        
+        additionalCursors.removeAll()
+        
+        // 计算起始和结束行
+        let startY = min(startPoint.y, endPoint.y)
+        let endY = max(startPoint.y, endPoint.y)
+        let targetX = endPoint.x
+        
+        // 获取行高
+        let lineHeight = layoutManager.defaultLineHeight(for: font ?? NSFont.systemFont(ofSize: 13))
+        
+        // 遍历每一行
+        var y = startY
+        while y <= endY {
+            let point = NSPoint(x: targetX, y: y)
+            if let index = characterIndex(for: point) {
+                let range = NSRange(location: index, length: 0)
+                if !additionalCursors.contains(where: { $0.location == range.location }) {
+                    additionalCursors.append(range)
+                }
+            }
+            y += lineHeight
+        }
+        
+        // 更新主光标到最后一个位置
+        if let lastCursor = additionalCursors.last {
+            setSelectedRange(lastCursor)
+            additionalCursors.removeLast()
+        }
+        
+        setNeedsDisplay(bounds)
+    }
+    
+    /// 获取指定点的字符索引
+    private func characterIndex(for point: NSPoint) -> Int? {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer else { return nil }
+        
+        let textContainerOrigin = textContainerInset
+        let adjustedPoint = NSPoint(
+            x: point.x - textContainerOrigin.width,
+            y: point.y - textContainerOrigin.height
+        )
+        
+        let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer)
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        
+        return charIndex
+    }
+    
+    // MARK: - 绘制多光标
+    
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+        
+        // 绘制额外的光标
+        if flag {
+            for cursorRange in additionalCursors {
+                if let cursorRect = rectForCursor(at: cursorRange.location) {
+                    color.set()
+                    cursorRect.fill()
+                }
+            }
+        }
+    }
+    
+    /// 获取指定位置的光标矩形
+    private func rectForCursor(at index: Int) -> NSRect? {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer,
+              index <= (string as NSString).length else { return nil }
+        
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: index, length: 0), actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        
+        // 调整为插入点大小
+        rect.origin.x += textContainerInset.width
+        rect.origin.y += textContainerInset.height
+        rect.size.width = 1.5  // 光标宽度
+        
+        return rect
+    }
+    
+    // MARK: - 多光标输入
+    
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        guard let insertString = string as? String else {
+            super.insertText(string, replacementRange: replacementRange)
+            return
+        }
+        
+        if !additionalCursors.isEmpty {
+            // 多光标插入
+            insertAtMultipleCursors(insertString)
+        } else {
+            super.insertText(string, replacementRange: replacementRange)
+        }
+    }
+    
+    override func deleteBackward(_ sender: Any?) {
+        if !additionalCursors.isEmpty {
+            deleteAtMultipleCursors()
+        } else {
+            super.deleteBackward(sender)
+        }
+    }
+    
+    /// 在多个光标位置插入文本
+    private func insertAtMultipleCursors(_ text: String) {
+        guard let textStorage = textStorage else { return }
+        
+        // 收集所有光标位置（包括主光标）
+        var allCursors = additionalCursors
+        allCursors.append(selectedRange())
+        
+        // 按位置降序排列（从后往前处理，避免位置偏移问题）
+        allCursors.sort { $0.location > $1.location }
+        
+        textStorage.beginEditing()
+        
+        var insertedLength = 0
+        for cursor in allCursors {
+            let insertRange = NSRange(location: cursor.location, length: cursor.length)
+            textStorage.replaceCharacters(in: insertRange, with: text)
+            insertedLength = text.count - cursor.length
+        }
+        
+        textStorage.endEditing()
+        
+        // 更新光标位置
+        let textLength = text.count
+        additionalCursors = additionalCursors.map { cursor in
+            NSRange(location: cursor.location + textLength, length: 0)
+        }
+        
+        // 更新主光标
+        let mainCursor = selectedRange()
+        setSelectedRange(NSRange(location: mainCursor.location + textLength, length: 0))
+        
+        // 通知更新
+        completionDelegate?.parent.text = self.string
+        completionDelegate?.applyHighlighting()
+    }
+    
+    /// 在多个光标位置删除
+    private func deleteAtMultipleCursors() {
+        guard let textStorage = textStorage else { return }
+        
+        // 收集所有光标位置
+        var allCursors = additionalCursors
+        allCursors.append(selectedRange())
+        
+        // 按位置降序排列
+        allCursors.sort { $0.location > $1.location }
+        
+        textStorage.beginEditing()
+        
+        for cursor in allCursors {
+            if cursor.location > 0 {
+                let deleteRange = NSRange(location: cursor.location - 1, length: 1)
+                textStorage.replaceCharacters(in: deleteRange, with: "")
+            }
+        }
+        
+        textStorage.endEditing()
+        
+        // 更新光标位置
+        additionalCursors = additionalCursors.compactMap { cursor in
+            if cursor.location > 0 {
+                return NSRange(location: cursor.location - 1, length: 0)
+            }
+            return nil
+        }
+        
+        // 更新主光标
+        let mainCursor = selectedRange()
+        if mainCursor.location > 0 {
+            setSelectedRange(NSRange(location: mainCursor.location - 1, length: 0))
+        }
+        
+        // 通知更新
+        completionDelegate?.parent.text = self.string
+        completionDelegate?.applyHighlighting()
+    }
+    
+    // MARK: - 键盘快捷键扩展列选择
+    
+    override func moveUp(_ sender: Any?) {
+        if NSEvent.modifierFlags.contains(.option) && NSEvent.modifierFlags.contains(.shift) {
+            // Option + Shift + 上：向上扩展列选择
+            extendColumnSelection(direction: -1)
+            return
+        }
+        super.moveUp(sender)
+    }
+    
+    override func moveDown(_ sender: Any?) {
+        if NSEvent.modifierFlags.contains(.option) && NSEvent.modifierFlags.contains(.shift) {
+            // Option + Shift + 下：向下扩展列选择
+            extendColumnSelection(direction: 1)
+            return
+        }
+        super.moveDown(sender)
+    }
+    
+    /// 扩展列选择
+    private func extendColumnSelection(direction: Int) {
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer else { return }
+        
+        let currentCursor = selectedRange()
+        let lineHeight = layoutManager.defaultLineHeight(for: font ?? NSFont.systemFont(ofSize: 13))
+        
+        // 获取当前光标的屏幕位置
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: currentCursor, actualCharacterRange: nil)
+        var cursorRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        cursorRect.origin.x += textContainerInset.width
+        cursorRect.origin.y += textContainerInset.height
+        
+        // 计算新位置
+        let newY = cursorRect.origin.y + (CGFloat(direction) * lineHeight)
+        let newPoint = NSPoint(x: cursorRect.origin.x, y: newY)
+        
+        if let newIndex = characterIndex(for: newPoint) {
+            // 添加新光标
+            if direction < 0 {
+                // 向上：在当前位置前添加光标
+                additionalCursors.insert(NSRange(location: newIndex, length: 0), at: 0)
+            } else {
+                // 向下：添加当前光标到额外光标，移动主光标
+                additionalCursors.append(currentCursor)
+                setSelectedRange(NSRange(location: newIndex, length: 0))
+            }
+            setNeedsDisplay(bounds)
+        }
+    }
+    
+    // MARK: - 清除多光标（Escape 键）
+    
+    override func cancelOperation(_ sender: Any?) {
+        if !additionalCursors.isEmpty {
+            additionalCursors.removeAll()
+            setNeedsDisplay(bounds)
+            return
+        }
+        super.cancelOperation(sender)
     }
     
     // MARK: - 拖放支持

@@ -31,7 +31,7 @@ struct SidebarView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var connections: [Connection]
     @Binding var selection: SidebarSelection?
-    @State private var showingAddSheet = false
+    @Binding var showingAddConnection: Bool  // 由 ContentView 传入，菜单栏也可控制
     @State private var editingConnection: Connection?
 
     var body: some View {
@@ -77,14 +77,11 @@ struct SidebarView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { showingAddSheet = true }) {
+                Button(action: { showingAddConnection = true }) {
                     Label("添加连接", systemImage: "plus")
                 }
                 .buttonStyle(AppIconButtonStyle())
             }
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            ConnectionFormView()
         }
         .sheet(item: Binding<Connection?>(
             get: { editingConnection },

@@ -35,6 +35,10 @@ class SQLiteDriver: DatabaseDriver {
         }
     }
     
+    func useDatabase(_ database: String) async throws {
+        // SQLite 只有一个 main 数据库，不需要切换
+    }
+    
     func fetchDatabases() async throws -> [String] {
         return ["main"]
     }

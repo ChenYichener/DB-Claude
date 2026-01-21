@@ -3,12 +3,19 @@ import SwiftData
 
 struct QueryEditorView: View {
     let connection: Connection
+    let tabId: UUID
+    let initialDatabase: String
+    @Bindable var tabManager: TabManager
     
     @State private var sql: String = ""
     @State private var results: [[String: String]] = []
     @State private var isExecuting: Bool = false
     @State private var errorMessage: String?
     @State private var executionTime: TimeInterval = 0
+    
+    // 当前选择的数据库
+    @State private var selectedDatabase: String = ""
+    @State private var availableDatabases: [String] = []
     
     // 自动补全数据
     @State private var tables: [String] = []
@@ -53,6 +60,14 @@ struct QueryEditorView: View {
             }
         }
         .onAppear {
+            selectedDatabase = initialDatabase
+            loadDatabaseList()
+            loadSchemaForCompletion()
+        }
+        .onChange(of: selectedDatabase) { _, newValue in
+            // 更新 TabManager 中的数据库名
+            tabManager.updateTabDatabase(id: tabId, databaseName: newValue)
+            // 重新加载 Schema
             loadSchemaForCompletion()
         }
         .onChange(of: sql) { _, newValue in
@@ -172,6 +187,12 @@ struct QueryEditorView: View {
     
     private var queryToolbar: some View {
         HStack(spacing: AppSpacing.md) {
+            // 连接和数据库选择器
+            connectionDatabaseSelector
+            
+            AppDivider(axis: .vertical)
+                .frame(height: 24)
+            
             runButton
             clearButton
             formatButton
@@ -194,6 +215,57 @@ struct QueryEditorView: View {
         .padding(.horizontal, AppSpacing.lg)
         .padding(.vertical, AppSpacing.md)
         .background(.ultraThinMaterial)
+    }
+    
+    // MARK: - 连接和数据库选择器
+    
+    private var connectionDatabaseSelector: some View {
+        HStack(spacing: AppSpacing.sm) {
+            // 连接名称（只读显示）
+            HStack(spacing: AppSpacing.xs) {
+                Image(systemName: connectionIcon)
+                    .font(.system(size: 11))
+                    .foregroundColor(AppColors.accent)
+                Text(connection.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColors.primaryText)
+            }
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.vertical, AppSpacing.xs)
+            .background(AppColors.secondaryBackground)
+            .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
+            
+            // 数据库选择器
+            if !availableDatabases.isEmpty {
+                Picker("", selection: $selectedDatabase) {
+                    if selectedDatabase.isEmpty {
+                        Text("选择数据库").tag("")
+                    }
+                    ForEach(availableDatabases, id: \.self) { db in
+                        Text(db).tag(db)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(minWidth: 120)
+                .labelsHidden()
+            } else {
+                Text(selectedDatabase.isEmpty ? "无数据库" : selectedDatabase)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.secondaryText)
+                    .padding(.horizontal, AppSpacing.sm)
+                    .padding(.vertical, AppSpacing.xs)
+                    .background(AppColors.secondaryBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
+            }
+        }
+    }
+    
+    private var connectionIcon: String {
+        switch connection.type {
+        case .sqlite: return "cylinder.split.1x2"
+        case .mysql: return "cylinder.split.1x2.fill"
+        case .postgresql: return "cylinder"
+        }
     }
     
     private var runButton: some View {
@@ -306,13 +378,38 @@ struct QueryEditorView: View {
         return items
     }
     
+    // MARK: - 加载数据库列表
+    
+    private func loadDatabaseList() {
+        Task {
+            do {
+                let driver = try await createDriverWithoutUseDatabase()
+                try await driver.connect()
+                
+                let databases = try await driver.fetchDatabases()
+                
+                await driver.disconnect()
+                
+                await MainActor.run {
+                    self.availableDatabases = databases
+                }
+            } catch {
+                print("[QueryEditor] 加载数据库列表失败: \(error)")
+            }
+        }
+    }
+    
     // MARK: - 加载 Schema 用于自动补全
     
     private func loadSchemaForCompletion() {
+        guard !selectedDatabase.isEmpty else { return }
+        
         Task {
             do {
                 let driver = try await createDriver()
                 try await driver.connect()
+                // 切换到选中的数据库
+                try await driver.useDatabase(selectedDatabase)
                 
                 let tableList = try await driver.fetchTables()
                 
@@ -382,6 +479,10 @@ struct QueryEditorView: View {
             do {
                 let driver = try await createDriver()
                 try await driver.connect()
+                // 切换到选中的数据库
+                if !selectedDatabase.isEmpty {
+                    try await driver.useDatabase(selectedDatabase)
+                }
                 
                 let countSQL = SQLFormatter.convertToCountQuery(sqlToExecute)
                 let previewSQL = SQLFormatter.convertToPreviewQuery(sqlToExecute)
@@ -434,6 +535,10 @@ struct QueryEditorView: View {
             do {
                 driver = try await createDriver()
                 try await driver?.connect()
+                // 切换到选中的数据库
+                if !selectedDatabase.isEmpty {
+                    try await driver?.useDatabase(selectedDatabase)
+                }
 
                 let rows = try await driver?.execute(sql: sqlToExecute) ?? []
                 
@@ -505,6 +610,21 @@ struct QueryEditorView: View {
         default:
             throw DatabaseError.connectionFailed("Unsupported driver")
         }
+    }
+    
+    /// 创建驱动但不切换数据库（用于获取数据库列表）
+    private func createDriverWithoutUseDatabase() async throws -> any DatabaseDriver {
+        return try await createDriver()
+    }
+    
+    /// 创建驱动并切换到选中的数据库
+    private func createDriverAndUseDatabase() async throws -> any DatabaseDriver {
+        let driver = try await createDriver()
+        try await driver.connect()
+        if !selectedDatabase.isEmpty {
+            try await driver.useDatabase(selectedDatabase)
+        }
+        return driver
     }
     
     // MARK: - Toast 显示

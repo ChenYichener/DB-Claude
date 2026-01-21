@@ -3,6 +3,7 @@ import Foundation
 protocol DatabaseDriver {
     func connect() async throws
     func disconnect() async
+    func useDatabase(_ database: String) async throws  // 切换当前数据库
     func fetchDatabases() async throws -> [String]
     func fetchTables() async throws -> [String]
     func fetchTablesWithInfo() async throws -> [TableInfo]
