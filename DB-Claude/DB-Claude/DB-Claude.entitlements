@@ -19,11 +19,5 @@
 	<!-- 允许读写用户选中的文件（用于 SQLite 导出等功能） -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
-
-	<!-- Keychain 访问组（确保开发阶段签名变化时仍可访问密码） -->
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)yichen.DB-Claude</string>
-	</array>
 </dict>
 </plist>

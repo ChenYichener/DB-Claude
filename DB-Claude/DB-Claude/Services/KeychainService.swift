@@ -26,24 +26,11 @@ enum KeychainError: Error, LocalizedError {
 /// 
 /// 使用 macOS Keychain 安全存储敏感凭据，避免明文存储密码。
 /// 密码以 Connection ID 为 key 进行存储和检索。
-/// 
-/// 使用 Keychain 访问组确保开发阶段签名变化时仍可访问密码。
 final class KeychainService: @unchecked Sendable {
     static let shared = KeychainService()
     
     /// Keychain 服务标识符
     private let service = "com.db-claude.connections"
-    
-    /// Keychain 访问组（与 entitlements 中的配置一致）
-    /// 使用访问组可以避免开发阶段因签名变化导致的弹窗确认
-    private var accessGroup: String? {
-        // 获取 Team ID 前缀
-        if let teamId = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String {
-            return "\(teamId)yichen.DB-Claude"
-        }
-        // 开发阶段可能没有 Team ID，返回 nil 使用默认行为
-        return nil
-    }
     
     private init() {}
     
@@ -62,7 +49,7 @@ final class KeychainService: @unchecked Sendable {
         }
         
         // 构建查询字典
-        var query: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
@@ -70,11 +57,6 @@ final class KeychainService: @unchecked Sendable {
             // 用户登录后即可访问，无需额外确认
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
         ]
-        
-        // 如果有访问组，添加到查询中
-        if let group = accessGroup {
-            query[kSecAttrAccessGroup as String] = group
-        }
         
         // 先尝试删除已存在的条目（更新场景）
         deletePassword(for: connectionId)
@@ -98,21 +80,13 @@ final class KeychainService: @unchecked Sendable {
     func getPassword(for connectionId: UUID) -> String? {
         let account = connectionId.uuidString
         
-        var query: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            // 禁用用户交互提示（避免弹窗要求输入系统密码）
-            // 如果无法静默访问，返回错误而非弹窗
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
-        
-        // 如果有访问组，添加到查询中
-        if let group = accessGroup {
-            query[kSecAttrAccessGroup as String] = group
-        }
         
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -120,10 +94,7 @@ final class KeychainService: @unchecked Sendable {
         guard status == errSecSuccess,
               let data = result as? Data,
               let password = String(data: data, encoding: .utf8) else {
-            if status == errSecInteractionNotAllowed {
-                // 需要用户交互但被禁用，密码存在但无法静默访问
-                print("[Keychain] 密码存在但需要用户确认，跳过: \(account)")
-            } else if status != errSecItemNotFound {
+            if status != errSecItemNotFound {
                 print("[Keychain] 读取密码失败: \(status)")
             }
             return nil
@@ -138,16 +109,11 @@ final class KeychainService: @unchecked Sendable {
     func deletePassword(for connectionId: UUID) -> Bool {
         let account = connectionId.uuidString
         
-        var query: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        
-        // 如果有访问组，添加到查询中
-        if let group = accessGroup {
-            query[kSecAttrAccessGroup as String] = group
-        }
         
         let status = SecItemDelete(query as CFDictionary)
         
