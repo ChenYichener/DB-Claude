@@ -164,42 +164,75 @@ create_dmg() {
         "$TEMP_DMG"
     
     # 挂载临时 DMG
-    MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$TEMP_DMG" | \
-        egrep '^/dev/' | sed 1q | awk '{print $NF}')
+    MOUNT_DIR="/Volumes/$APP_NAME"
     
-    if [ -z "$MOUNT_DIR" ]; then
-        # 备用方式
-        MOUNT_DIR="/Volumes/$APP_NAME"
+    # 确保挂载点不存在（防止冲突）
+    if [ -d "$MOUNT_DIR" ]; then
+        print_warning "发现已存在的挂载点，尝试卸载..."
+        hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
+        sleep 1
     fi
     
-    print_step "DMG 已挂载到: $MOUNT_DIR"
+    # 挂载 DMG，获取设备节点用于后续卸载
+    ATTACH_OUTPUT=$(hdiutil attach -readwrite -noverify "$TEMP_DMG")
+    DEVICE_NODE=$(echo "$ATTACH_OUTPUT" | grep '/dev/disk' | head -1 | awk '{print $1}')
     
-    # 设置 DMG 窗口样式（使用 AppleScript）
-    echo '
-        tell application "Finder"
-            tell disk "'$APP_NAME'"
-                open
-                set current view of container window to icon view
-                set toolbar visible of container window to false
-                set statusbar visible of container window to false
-                set the bounds of container window to {400, 100, 920, 440}
-                set viewOptions to the icon view options of container window
-                set arrangement of viewOptions to not arranged
-                set icon size of viewOptions to 80
-                set position of item "'$APP_NAME'.app" of container window to {130, 150}
-                set position of item "Applications" of container window to {390, 150}
-                close
-                open
-                update without registering applications
-                delay 2
-            end tell
-        end tell
-    ' | osascript || print_warning "无法设置 DMG 窗口样式（这不影响功能）"
+    # 等待挂载完成
+    sleep 2
+    
+    if [ ! -d "$MOUNT_DIR" ]; then
+        print_error "DMG 挂载失败"
+        exit 1
+    fi
+    
+    print_step "DMG 已挂载到: $MOUNT_DIR (设备: $DEVICE_NODE)"
+    
+    # 设置 DMG 窗口样式（使用 AppleScript，超时不影响功能）
+    # 注意：AppleScript 可能超时，这是正常的
+    (
+        osascript <<EOF
+tell application "Finder"
+    tell disk "$APP_NAME"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {400, 100, 920, 440}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 80
+        set position of item "$APP_NAME.app" of container window to {130, 150}
+        set position of item "Applications" of container window to {390, 150}
+        close
+    end tell
+end tell
+EOF
+    ) 2>/dev/null || print_warning "无法设置 DMG 窗口样式（这不影响功能）"
     
     sync
+    sleep 1
     
-    # 卸载 DMG
-    hdiutil detach "$MOUNT_DIR" -force || true
+    # 确保 Finder 释放 DMG
+    osascript -e 'tell application "Finder" to close every window' 2>/dev/null || true
+    sleep 1
+    
+    # 卸载 DMG（使用设备节点更可靠）
+    print_step "卸载 DMG..."
+    if [ -n "$DEVICE_NODE" ]; then
+        hdiutil detach "$DEVICE_NODE" -force 2>/dev/null || hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
+    else
+        hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
+    fi
+    
+    # 等待卸载完成
+    sleep 2
+    
+    # 确认已卸载
+    if [ -d "$MOUNT_DIR" ]; then
+        print_warning "挂载点仍存在，强制卸载..."
+        diskutil unmount force "$MOUNT_DIR" 2>/dev/null || true
+        sleep 2
+    fi
     
     # 转换为压缩的只读 DMG
     rm -f "$DMG_PATH"
