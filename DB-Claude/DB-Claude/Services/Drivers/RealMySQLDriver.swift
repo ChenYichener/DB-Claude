@@ -42,7 +42,8 @@ class RealMySQLDriver: DatabaseDriver {
         }
 
         let port = connection.port ?? 3306
-        let password = connection.password ?? ""
+        // 从 Keychain 获取密码
+        let password = connection.getSecurePassword() ?? ""
         let database = connection.databaseName ?? ""
 
         // 诊断日志：输出连接参数
@@ -50,7 +51,7 @@ class RealMySQLDriver: DatabaseDriver {
         print("[MySQL] 主机: \(host)")
         print("[MySQL] 端口: \(port)")
         print("[MySQL] 用户: \(username)")
-        print("[MySQL] 密码: \(password.isEmpty ? "(空)" : "(已设置)")")
+        print("[MySQL] 密码: \(password.isEmpty ? "(空)" : "(已设置，来自 Keychain)")")
         print("[MySQL] 数据库: \(database.isEmpty ? "(未指定)" : database)")
 
         // Basic configuration

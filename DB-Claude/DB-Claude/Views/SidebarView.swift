@@ -97,7 +97,10 @@ struct SidebarView: View {
     private func deleteConnections(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(connections[index])
+                let connection = connections[index]
+                // 删除 Keychain 中的密码
+                connection.deleteSecurePassword()
+                modelContext.delete(connection)
             }
             // Reset selection if deleted
             // Implementation simplified: if selection is related to deleted connection, plain clear
@@ -256,6 +259,8 @@ struct ConnectionRow: View {
 
             Button(role: .destructive, action: {
                 withAnimation {
+                    // 删除 Keychain 中的密码
+                    connection.deleteSecurePassword()
                     modelContext.delete(connection)
                     selection = nil
                 }

@@ -147,30 +147,43 @@ struct ConnectionFormView: View {
         host = conn.host ?? "localhost"
         port = String(conn.port ?? 3306)
         username = conn.username ?? "root"
-        password = conn.password ?? ""
+        // 从 Keychain 读取密码
+        password = conn.getSecurePassword() ?? ""
         databaseName = conn.databaseName ?? ""
         filePath = conn.filePath ?? ""
     }
 
     private func saveConnection() {
-        let serverConfig = isSQLite ? (nil, nil, nil, nil, nil) : (host, Int(port), username, password.isEmpty ? nil : password, databaseName)
+        let serverConfig = isSQLite ? (nil, nil, nil, nil) : (host, Int(port), username, databaseName)
         
         if let conn = editingConnection {
+            // 更新现有连接
             conn.name = name
             conn.host = serverConfig.0
             conn.port = serverConfig.1
             conn.username = serverConfig.2
-            conn.password = serverConfig.3
-            conn.databaseName = serverConfig.4
+            conn.databaseName = serverConfig.3
             conn.filePath = isSQLite ? filePath : nil
             conn.updatedAt = Date()
+            
+            // 密码存储到 Keychain
+            if !isSQLite {
+                conn.setSecurePassword(password.isEmpty ? nil : password)
+            }
         } else {
-            modelContext.insert(Connection(
+            // 创建新连接
+            let newConnection = Connection(
                 name: name, type: type,
                 host: serverConfig.0, port: serverConfig.1,
-                username: serverConfig.2, password: serverConfig.3,
-                databaseName: serverConfig.4, filePath: isSQLite ? filePath : nil
-            ))
+                username: serverConfig.2, password: nil,
+                databaseName: serverConfig.3, filePath: isSQLite ? filePath : nil
+            )
+            modelContext.insert(newConnection)
+            
+            // 密码存储到 Keychain
+            if !isSQLite && !password.isEmpty {
+                newConnection.setSecurePassword(password)
+            }
         }
         dismiss()
     }

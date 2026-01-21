@@ -238,11 +238,33 @@ HStack {
 ## 已知限制
 
 1. **MySQL 驱动**：当前为占位符实现，返回假数据
-2. **密码安全**：未实现 Keychain 存储，密码明文存储
-3. **连接池**：每次查询都重新连接，无连接复用
-4. **查询取消**：无法中断正在执行的查询
-5. **结果导出**：无 CSV/JSON 导出功能
-6. **测试覆盖**：无实际单元测试或 UI 测试
+2. **连接池**：每次查询都重新连接，无连接复用
+3. **查询取消**：无法中断正在执行的查询
+4. **结果导出**：无 CSV/JSON 导出功能
+5. **测试覆盖**：无实际单元测试或 UI 测试
+
+## 安全特性
+
+### Keychain 密码存储
+
+数据库连接密码使用 macOS Keychain 安全存储：
+
+- **存储位置**：`Services/KeychainService.swift`
+- **访问方式**：`Connection.getSecurePassword()` / `Connection.setSecurePassword(_:)`
+- **自动迁移**：旧版明文密码会自动迁移到 Keychain
+
+```swift
+// 获取密码（自动处理迁移）
+let password = connection.getSecurePassword()
+
+// 设置密码
+connection.setSecurePassword("new_password")
+
+// 删除密码
+connection.deleteSecurePassword()
+```
+
+**注意**：`Connection.password` 属性已废弃，新密码不再存储到 SwiftData。
 
 ## 产品需求参考
 
