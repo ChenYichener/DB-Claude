@@ -19,6 +19,9 @@ on:
         required: true
         default: '1.0.0'
 
+permissions:
+  contents: write  # 允许创建 Release 和上传资产
+
 jobs:
   build:
     name: 构建并发布
