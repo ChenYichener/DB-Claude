@@ -212,6 +212,7 @@ enum DatabaseError: Error {
 
 - **ScrollView 事件传递问题**：详见 `/docs/swiftui-scrollview-pitfall.md`
 - **NSTableView 单元格编辑问题**：详见 `/docs/nstableview-editing-pitfall.md`
+- **NSTableView 数据显示问题**：详见 `/docs/nstableview-data-display-pitfall.md`
 
 ### ScrollView 事件传递问题
 

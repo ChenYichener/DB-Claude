@@ -75,40 +75,59 @@ struct EditableResultsGridView: NSViewRepresentable {
             self.columns = cols
             let dataRows = Array(results.dropFirst())
             self.rowData = dataRows.map { row in cols.map { col in row[col] } }
-            self.dataHash = dataRows.count
+            // 使用更可靠的 hash：基于数据内容而不仅仅是行数
+            self.dataHash = Self.computeDataHash(rowData: self.rowData)
+            print("[ResultsGrid] init: 使用 __columns__ 元数据, columns=\(cols.count), dataRows=\(dataRows.count), hash=\(self.dataHash)")
         } else if let first = results.first {
             let cols = first.keys.sorted()
             self.columns = cols
             self.rowData = results.map { row in cols.map { col in row[col] } }
-            self.dataHash = results.count
+            self.dataHash = Self.computeDataHash(rowData: self.rowData)
+            print("[ResultsGrid] init: 使用 keys, columns=\(cols.count), rows=\(results.count), hash=\(self.dataHash)")
         } else {
             self.columns = []
             self.rowData = []
             self.dataHash = 0
+            print("[ResultsGrid] init: 空结果")
         }
+    }
+    
+    /// 计算数据的 hash 值，用于检测数据是否变化
+    private static func computeDataHash(rowData: [[String?]]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(rowData.count)
+        // 取前 10 行和后 10 行的数据计算 hash，避免大数据集时性能问题
+        let sampleRows = Array(rowData.prefix(10)) + Array(rowData.suffix(10))
+        for row in sampleRows {
+            for value in row {
+                hasher.combine(value)
+            }
+        }
+        return hasher.finalize()
     }
     
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = false
+        scrollView.autohidesScrollers = true  // 自动隐藏滚动条，更简洁
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = NSColor.windowBackgroundColor
+        scrollView.backgroundColor = NSColor.textBackgroundColor
 
         let tableView = EditableTableView()
         tableView.style = .plain
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
         tableView.allowsMultipleSelection = false
-        tableView.rowHeight = 28  // 增加行高
-        tableView.intercellSpacing = NSSize(width: 2, height: 2)  // 增加单元格间距
-        tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.08)  // 更淡的网格线
-        tableView.backgroundColor = NSColor.windowBackgroundColor
-        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.rowHeight = 32  // 适中的行高
+        tableView.intercellSpacing = NSSize(width: 0, height: 1)  // 只有水平间距
+        tableView.gridStyleMask = [.solidHorizontalGridLineMask]  // 只显示水平分隔线
+        tableView.gridColor = NSColor.separatorColor.withAlphaComponent(0.15)
+        tableView.backgroundColor = NSColor.textBackgroundColor
+        tableView.usesAlternatingRowBackgroundColors = false  // 关闭交替颜色
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.selectionHighlightStyle = .regular  // 使用系统选中样式
 
         // 设置编辑模式
         tableView.isEditingEnabled = isEditable
@@ -126,6 +145,10 @@ struct EditableResultsGridView: NSViewRepresentable {
         tableView.menu = createContextMenu(coordinator: coordinator)
 
         scrollView.documentView = tableView
+        
+        // 初始加载数据
+        tableView.reloadData()
+        print("[EditableGrid] makeNSView: 初始化完成, columns=\(columns.count), rows=\(rowData.count)")
 
         return scrollView
     }
@@ -137,12 +160,23 @@ struct EditableResultsGridView: NSViewRepresentable {
         let needsReload = coordinator.dataHash != dataHash || coordinator.columns != columns
         let editModeChanged = coordinator.isEditable != isEditable
         
-        // 检查是否正在编辑
-        let firstResponder = tableView.window?.firstResponder
-        let isCurrentlyEditing = firstResponder is NSTextView || 
-                                 (firstResponder is NSTextField && tableView.isEditingEnabled)
+        // 检查表格是否正在编辑（只检查表格内部的编辑状态）
+        let isCurrentlyEditing: Bool = {
+            guard let firstResponder = tableView.window?.firstResponder else { return false }
+            // 检查 firstResponder 是否是表格内部的 field editor 或 text field
+            if let textView = firstResponder as? NSTextView,
+               let delegate = textView.delegate as? NSTextField,
+               delegate.superview?.superview === tableView {
+                return true
+            }
+            if let textField = firstResponder as? NSTextField,
+               textField.superview?.superview === tableView {
+                return true
+            }
+            return false
+        }()
         
-        print("[EditableGrid] updateNSView: needsReload=\(needsReload), editModeChanged=\(editModeChanged), isEditable=\(isEditable)")
+        print("[EditableGrid] updateNSView: needsReload=\(needsReload), columns=\(columns.count), rows=\(rowData.count), hash=\(dataHash), oldHash=\(coordinator.dataHash)")
         
         // 更新数据
         coordinator.columns = columns
@@ -156,6 +190,12 @@ struct EditableResultsGridView: NSViewRepresentable {
         coordinator.onCellEdit = onCellEdit
         coordinator.onRowSelect = onRowSelect
         coordinator.onCopySQL = onCopySQL
+        
+        // 关键：更新 columnIndexMap
+        coordinator.columnIndexMap.removeAll()
+        for (index, col) in columns.enumerated() {
+            coordinator.columnIndexMap[col] = index
+        }
         
         // 更新编辑模式
         tableView.isEditingEnabled = isEditable
@@ -204,16 +244,16 @@ struct EditableResultsGridView: NSViewRepresentable {
         for (index, columnName) in columns.enumerated() {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(columnName))
             column.title = columnName
-            column.width = 140  // 增加默认列宽
-            column.minWidth = 60
-            column.maxWidth = 600
+            column.width = 120  // 紧凑的默认列宽
+            column.minWidth = 50
+            column.maxWidth = 500
             column.resizingMask = .userResizingMask
             column.isEditable = isEditable
             column.sortDescriptorPrototype = NSSortDescriptor(key: columnName, ascending: true)
 
-            // 表头样式优化
+            // 现代表头样式
             let headerCell = NSTableHeaderCell(textCell: columnName)
-            headerCell.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+            headerCell.font = NSFont.systemFont(ofSize: 11, weight: .medium)
             column.headerCell = headerCell
 
             coordinator.columnIndexMap[columnName] = index
@@ -279,12 +319,12 @@ struct EditableResultsGridView: NSViewRepresentable {
         var columnIndexMap: [String: Int] = [:]
         weak var tableView: NSTableView?
         
-        // 缓存
-        private let normalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)  // 增大字体
+        // 缓存 - 使用系统字体，更现代简洁
+        private let normalFont = NSFont.systemFont(ofSize: 12, weight: .regular)
         private let nullFont: NSFont
         private let normalColor = NSColor.labelColor
-        private let nullColor = NSColor.tertiaryLabelColor
-        private let editedColor = NSColor.systemOrange
+        private let nullColor = NSColor.placeholderTextColor
+        private let editedColor = NSColor.systemBlue
         
         // 编辑跟踪
         var editedCells: [String: String?] = [:]  // "row_col" -> newValue
@@ -308,8 +348,9 @@ struct EditableResultsGridView: NSViewRepresentable {
             self.onRowSelect = onRowSelect
             self.onCopySQL = onCopySQL
             
-            let descriptor = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontDescriptor.withSymbolicTraits(.italic)
-            self.nullFont = NSFont(descriptor: descriptor, size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            // NULL 值使用斜体系统字体
+            let descriptor = NSFont.systemFont(ofSize: 11, weight: .regular).fontDescriptor.withSymbolicTraits(.italic)
+            self.nullFont = NSFont(descriptor: descriptor, size: 11) ?? NSFont.systemFont(ofSize: 11, weight: .light)
             
             super.init()
             
@@ -346,7 +387,6 @@ struct EditableResultsGridView: NSViewRepresentable {
                let existingTextField = reusedCell.textField {
                 cellView = reusedCell
                 textField = existingTextField
-                debugLog("复用单元格: row=\(row), col=\(columnName)")
             } else {
                 // 创建新的 NSTableCellView
                 cellView = NSTableCellView()
@@ -366,12 +406,10 @@ struct EditableResultsGridView: NSViewRepresentable {
                 
                 textField.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([
-                    textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                    textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                    textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 8),
+                    textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -8),
                     textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
                 ])
-                
-                debugLog("创建新单元格: row=\(row), col=\(columnName)")
             }
             
             // 关键：设置 delegate 来捕获所有编辑结束事件（不仅仅是按 Enter）
@@ -385,8 +423,6 @@ struct EditableResultsGridView: NSViewRepresentable {
             // 设置是否可编辑和可选择
             textField.isEditable = isEditable
             textField.isSelectable = true
-            
-            debugLog("配置单元格: row=\(row), col=\(columnName), isEditable=\(isEditable)")
             
             // 检查是否有编辑过的值
             let editKey = "\(row)_\(columnIndex)"
@@ -421,7 +457,6 @@ struct EditableResultsGridView: NSViewRepresentable {
         func controlTextDidBeginEditing(_ obj: Notification) {
             guard let textField = obj.object as? NSTextField else { return }
             let columnName = textField.cell?.representedObject as? String ?? "unknown"
-            debugLog(">>> 编辑开始: row=\(textField.tag), col=\(columnName), value='\(textField.stringValue)'")
         }
         
         // 编辑结束时的回调（NSTextFieldDelegate 方法，失去焦点时触发）
@@ -431,13 +466,11 @@ struct EditableResultsGridView: NSViewRepresentable {
                 return
             }
             
-            debugLog(">>> 编辑结束 (delegate): row=\(textField.tag), value='\(textField.stringValue)'")
             processEditEnd(textField: textField)
         }
         
         // 按 Enter 键时的回调（通过 target/action 触发）
         @objc func textFieldActionTriggered(_ sender: NSTextField) {
-            debugLog(">>> Action 触发 (Enter): row=\(sender.tag), value='\(sender.stringValue)'")
             // 注意：按 Enter 后会自动触发 controlTextDidEndEditing，所以这里不需要重复处理
             // 但为了安全，我们可以标记一下已经处理过
         }

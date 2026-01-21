@@ -177,7 +177,9 @@ class SQLiteDriver: DatabaseDriver {
     func getDDL(for table: String) async throws -> String {
         let sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name = '\(table)';"
         let results = try await execute(sql: sql)
-        if let ddl = results.first?["sql"] {
+        // 跳过第一行元数据行（__columns__），获取实际数据
+        let dataRows = results.dropFirst()
+        if let first = dataRows.first, let ddl = first["sql"] {
             return ddl
         }
         throw DatabaseError.queryFailed("Table not found or no DDL available")

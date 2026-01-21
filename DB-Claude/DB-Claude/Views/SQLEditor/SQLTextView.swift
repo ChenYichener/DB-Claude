@@ -1064,6 +1064,12 @@ class SQLEditorTextView: NSTextView {
     }
     
     override func keyDown(with event: NSEvent) {
+        // 处理 Cmd+R 快捷键（执行查询，支持选中执行）
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "r" {
+            completionDelegate?.executeQuery()
+            return
+        }
+        
         // 让 delegate 先处理
         super.keyDown(with: event)
     }

@@ -29,11 +29,25 @@ enum SQLStatementType: String, CaseIterable, Identifiable {
         }
     }
     
+    var color: Color {
+        switch self {
+        case .all: return AppColors.secondaryText
+        case .select: return AppColors.accent
+        case .insert: return AppColors.success
+        case .update: return AppColors.warning
+        case .delete: return AppColors.error
+        case .alter: return .purple
+        case .create: return .teal
+        case .drop: return .red
+        case .other: return AppColors.secondaryText
+        }
+    }
+    
     /// 从 SQL 语句判断类型
     static func detect(from sql: String) -> SQLStatementType {
         let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         
-        if trimmed.hasPrefix("SELECT") { return .select }
+        if trimmed.hasPrefix("SELECT") || trimmed.hasPrefix("EXPLAIN") { return .select }
         if trimmed.hasPrefix("INSERT") { return .insert }
         if trimmed.hasPrefix("UPDATE") { return .update }
         if trimmed.hasPrefix("DELETE") { return .delete }
@@ -53,6 +67,7 @@ struct HistoryInspectorView: View {
     var connectionID: UUID?
     
     @State private var selectedType: SQLStatementType = .all
+    @State private var showClearConfirmation: Bool = false
     
     var filteredHistory: [QueryHistory] {
         var items = historyItems
@@ -70,6 +85,14 @@ struct HistoryInspectorView: View {
         return items
     }
     
+    /// 当前连接的所有历史记录（用于清空）
+    private var connectionHistory: [QueryHistory] {
+        if let cid = connectionID {
+            return historyItems.filter { $0.connectionID == cid }
+        }
+        return historyItems
+    }
+    
     /// 计算各类型数量（用于显示徽章）
     private func countForType(_ type: SQLStatementType) -> Int {
         var items = historyItems
@@ -83,11 +106,31 @@ struct HistoryInspectorView: View {
         return items.filter { SQLStatementType.detect(from: $0.sql) == type }.count
     }
     
+    /// 清空历史记录
+    private func clearHistory() {
+        withAnimation {
+            for item in connectionHistory {
+                modelContext.delete(item)
+            }
+        }
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // 标题栏 - 使用 AppToolbar
             AppToolbar(title: "历史记录") {
-                EmptyView()
+                // 清空按钮
+                if !connectionHistory.isEmpty {
+                    Button {
+                        showClearConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundColor(AppColors.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .help("清空历史记录")
+                }
             } trailing: {
                 AppBadge(count: filteredHistory.count)
             }
@@ -107,7 +150,7 @@ struct HistoryInspectorView: View {
                 )
             } else {
                 ScrollView {
-                    LazyVStack(spacing: AppSpacing.xs) {
+                    LazyVStack(spacing: 2) {
                         ForEach(filteredHistory) { item in
                             HistoryItemRow(
                                 item: item,
@@ -124,11 +167,20 @@ struct HistoryInspectorView: View {
                             )
                         }
                     }
-                    .padding(AppSpacing.sm)
+                    .padding(.horizontal, AppSpacing.xs)
+                    .padding(.vertical, AppSpacing.xs)
                 }
             }
         }
         .background(AppColors.background)
+        .alert("清空历史记录", isPresented: $showClearConfirmation) {
+            Button("取消", role: .cancel) { }
+            Button("清空", role: .destructive) {
+                clearHistory()
+            }
+        } message: {
+            Text("确定要清空当前连接的所有历史记录吗？此操作无法撤销。")
+        }
     }
 }
 
@@ -166,37 +218,41 @@ private struct SQLTypeFilterView: View {
                             selectedType = type
                         }
                     } label: {
-                        HStack {
-                            Image(systemName: type.icon)
-                            Text(type.rawValue)
-                            Spacer()
-                            if countForType(type) > 0 {
-                                Text("\(countForType(type))")
-                                    .foregroundColor(.secondary)
+                        Label {
+                            HStack {
+                                Text(type.rawValue)
+                                Spacer()
+                                if countForType(type) > 0 {
+                                    Text("\(countForType(type))")
+                                        .foregroundColor(.secondary)
+                                }
                             }
-                            if selectedType == type {
-                                Image(systemName: "checkmark")
-                            }
+                        } icon: {
+                            Image(systemName: selectedType == type ? "checkmark" : type.icon)
                         }
                     }
                 }
             } label: {
-                FilterChip(
-                    title: secondaryTypes.contains(selectedType) ? selectedType.rawValue : "更多",
-                    icon: secondaryTypes.contains(selectedType) ? selectedType.icon : "ellipsis",
-                    isSelected: secondaryTypes.contains(selectedType),
-                    count: nil
-                ) {}
+                Image(systemName: secondaryTypes.contains(selectedType) ? selectedType.icon : "ellipsis")
+                    .font(.system(size: 11))
+                    .frame(minWidth: 28, minHeight: 24)
+                    .padding(.horizontal, AppSpacing.xs)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppRadius.sm)
+                            .fill(secondaryTypes.contains(selectedType) ? AppColors.accent : AppColors.secondaryBackground)
+                    )
+                    .foregroundColor(secondaryTypes.contains(selectedType) ? .white : AppColors.primaryText)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .help("更多")
             
             Spacer()
         }
     }
 }
 
-// MARK: - 筛选芯片组件
+// MARK: - 筛选芯片组件（仅图标）
 private struct FilterChip: View {
     let title: String
     let icon: String
@@ -206,24 +262,16 @@ private struct FilterChip: View {
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
-                Text(title)
-                    .font(AppTypography.small)
+                    .font(.system(size: 11))
                 if let count = count, count > 0 {
                     Text("\(count)")
                         .font(.system(size: 9, weight: .medium))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? Color.white.opacity(0.3) : AppColors.tertiaryBackground)
-                        )
                 }
             }
-            .padding(.horizontal, AppSpacing.sm)
-            .padding(.vertical, 4)
+            .frame(minWidth: 28, minHeight: 24)
+            .padding(.horizontal, AppSpacing.xs)
             .background(
                 RoundedRectangle(cornerRadius: AppRadius.sm)
                     .fill(isSelected ? AppColors.accent : AppColors.secondaryBackground)
@@ -231,6 +279,7 @@ private struct FilterChip: View {
             .foregroundColor(isSelected ? .white : AppColors.primaryText)
         }
         .buttonStyle(.plain)
+        .help(title)
     }
 }
 
@@ -242,57 +291,126 @@ private struct HistoryItemRow: View {
     let onDelete: () -> Void
 
     @State private var isHovering = false
+    @State private var isExpanded = false
+    
+    /// SQL 截断显示的最大字符数
+    private let maxDisplayLength = 120
+    
+    /// 是否需要截断
+    private var needsTruncation: Bool {
+        item.sql.count > maxDisplayLength
+    }
+    
+    /// 显示的 SQL 文本
+    private var displaySQL: String {
+        if needsTruncation && !isExpanded {
+            // 截取并清理换行符
+            let truncated = String(item.sql.prefix(maxDisplayLength))
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: "")
+            return truncated.trimmingCharacters(in: .whitespaces) + "..."
+        }
+        return item.sql
+    }
+    
+    /// SQL 类型
+    private var sqlType: SQLStatementType {
+        SQLStatementType.detect(from: item.sql)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.sm) {
-            // SQL 内容（带语法高亮）
-            HighlightedSQLText(sql: item.sql)
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // 元信息
-            HStack(spacing: AppSpacing.md) {
-                // 时间
-                HStack(spacing: AppSpacing.xs) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                    Text(item.timestamp, style: .time)
-                }
-
-                // 状态
-                HStack(spacing: AppSpacing.xs) {
-                    Circle()
-                        .fill(item.status == "Error" ? AppColors.error : AppColors.success)
-                        .frame(width: 7, height: 7)
-                    Text(String(format: "%.3fs", item.executionTime))
-                }
-
-                Spacer()
+        HStack(alignment: .top, spacing: AppSpacing.sm) {
+            // 左侧：类型指示器 + 状态
+            VStack(spacing: 2) {
+                // SQL 类型图标
+                Image(systemName: sqlType.icon)
+                    .font(.system(size: 9))
+                    .foregroundColor(sqlType.color)
+                
+                // 状态指示点
+                Circle()
+                    .fill(item.status == "Error" ? AppColors.error : AppColors.success)
+                    .frame(width: 5, height: 5)
             }
-            .font(AppTypography.small)
-            .foregroundColor(AppColors.secondaryText)
+            .frame(width: 16)
+            .padding(.top, 2)
+            
+            // 右侧：SQL 内容 + 元信息
+            VStack(alignment: .leading, spacing: 3) {
+                // SQL 内容（带语法高亮，小字体）
+                HighlightedSQLText(sql: displaySQL, fontSize: 11)
+                    .lineLimit(isExpanded ? nil : 2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // 元信息行
+                HStack(spacing: AppSpacing.sm) {
+                    // 时间
+                    Text(item.timestamp, style: .time)
+                        .font(.system(size: 9))
+                        .foregroundColor(AppColors.tertiaryText)
+                    
+                    // 执行时间
+                    Text(String(format: "%.2fs", item.executionTime))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(AppColors.tertiaryText)
+                    
+                    // SQL 长度（大 SQL 显示）
+                    if item.sql.count > 100 {
+                        Text("\(item.sql.count) 字符")
+                            .font(.system(size: 9))
+                            .foregroundColor(AppColors.tertiaryText)
+                    }
+                    
+                    Spacer()
+                    
+                    // 展开/收起按钮（仅大 SQL 显示）
+                    if needsTruncation {
+                        Button {
+                            withAnimation(AppAnimation.fast) {
+                                isExpanded.toggle()
+                            }
+                        } label: {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(AppColors.tertiaryText)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
-        .padding(AppSpacing.md)
+        .padding(.horizontal, AppSpacing.sm)
+        .padding(.vertical, AppSpacing.xs)
         .background(
-            RoundedRectangle(cornerRadius: AppRadius.md)
-                .fill(isHovering ? AppColors.hover : AppColors.secondaryBackground)
+            RoundedRectangle(cornerRadius: AppRadius.sm)
+                .fill(isHovering ? AppColors.hover : Color.clear)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppRadius.md)
-                .stroke(AppColors.border.opacity(0.5), lineWidth: 0.5)
-        )
-        .scaleEffect(isHovering ? 1.01 : 1.0)
-        .animation(AppAnimation.fast, value: isHovering)
         .contentShape(Rectangle())
         .draggable(item.sql) // 支持拖拽 SQL 到编辑器
         .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
         .contextMenu {
             Button {
+                onTap()
+            } label: {
+                Label("填充到编辑器", systemImage: "square.and.pencil")
+            }
+            
+            Button {
                 onCopy()
             } label: {
                 Label("复制 SQL", systemImage: "doc.on.doc")
+            }
+            
+            if needsTruncation {
+                Button {
+                    withAnimation(AppAnimation.fast) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    Label(isExpanded ? "收起" : "展开全部", systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                }
             }
 
             Divider()

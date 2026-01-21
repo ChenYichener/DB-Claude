@@ -3,7 +3,7 @@ import SwiftData
 
 struct ContentView: View {
     @State private var tabManager = TabManager()
-    @State private var inspectorIsPresented: Bool = false // 默认隐藏
+    @State private var inspectorIsPresented: Bool = true // 默认显示历史 SQL 面板
 
     // Sidebar state
     @State private var selection: SidebarSelection?

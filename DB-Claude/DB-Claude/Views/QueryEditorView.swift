@@ -173,7 +173,6 @@ struct QueryEditorView: View {
     private var queryToolbar: some View {
         HStack(spacing: AppSpacing.md) {
             runButton
-            hiddenShortcutButton
             clearButton
             formatButton
             
@@ -211,15 +210,6 @@ struct QueryEditorView: View {
         .disabled(isExecuting)
     }
     
-    private var hiddenShortcutButton: some View {
-        Button(action: { executeQuery(sql: sql) }) {
-            EmptyView()
-        }
-        .keyboardShortcut("r", modifiers: .command)
-        .opacity(0)
-        .frame(width: 0, height: 0)
-    }
-    
     private var clearButton: some View {
         Button(action: { sql = "" }) {
             Image(systemName: "trash")
@@ -236,36 +226,31 @@ struct QueryEditorView: View {
     }
     
     private var fontSizeControls: some View {
-        HStack(spacing: AppSpacing.xs) {
-            Button {
-                if fontSize > 10 { fontSize -= 1 }
-            } label: {
-                Image(systemName: "textformat.size.smaller")
-                    .font(.system(size: 11))
-                    .foregroundColor(AppColors.secondaryText)
-            }
-            .buttonStyle(.plain)
-            .disabled(fontSize <= 10)
-
+        HStack(spacing: AppSpacing.sm) {
+            Image(systemName: "textformat.size")
+                .font(.system(size: 11))
+                .foregroundColor(AppColors.secondaryText)
+            
+            // 紧凑滑块
+            Slider(value: $fontSize, in: 10...24, step: 1)
+                .frame(width: 80)
+                .controlSize(.mini)
+            
+            // 数字显示（支持滚轮调整）
             Text("\(Int(fontSize))")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(AppColors.secondaryText)
-                .frame(width: 24)
-
-            Button {
-                if fontSize < 24 { fontSize += 1 }
-            } label: {
-                Image(systemName: "textformat.size.larger")
-                    .font(.system(size: 11))
-                    .foregroundColor(AppColors.secondaryText)
-            }
-            .buttonStyle(.plain)
-            .disabled(fontSize >= 24)
+                .foregroundColor(AppColors.primaryText)
+                .frame(width: 20)
+                .onScrollWheel { delta in
+                    let newSize = fontSize + delta
+                    fontSize = min(24, max(10, newSize))
+                }
         }
         .padding(.horizontal, AppSpacing.sm)
         .padding(.vertical, AppSpacing.xs)
         .background(AppColors.hover)
         .clipShape(Capsule())
+        .help("字体大小: \(Int(fontSize))pt (滚轮可调整)")
     }
     
     private var dangerousOperationToggles: some View {
@@ -310,8 +295,10 @@ struct QueryEditorView: View {
     }
     
     private var statusItems: [StatusItem] {
+        // 计算实际数据行数（减去元数据行）
+        let dataRowCount = max(0, results.count - 1)
         var items: [StatusItem] = [
-            StatusItem("\(results.count) 行", icon: "list.number")
+            StatusItem("\(dataRowCount) 行", icon: "list.number")
         ]
         if executionTime > 0 {
             items.append(StatusItem(String(format: "%.3f 秒", executionTime), icon: "clock"))
@@ -402,7 +389,9 @@ struct QueryEditorView: View {
                 var rowCount = 0
                 if let countSQL = countSQL {
                     let countResult = try await driver.execute(sql: countSQL)
-                    if let firstRow = countResult.first,
+                    // 跳过第一行元数据行（__columns__），获取实际数据
+                    let dataRows = countResult.dropFirst()
+                    if let firstRow = dataRows.first,
                        let countValue = firstRow.values.first,
                        let count = Int(countValue) {
                         rowCount = count
@@ -449,6 +438,10 @@ struct QueryEditorView: View {
                 let rows = try await driver?.execute(sql: sqlToExecute) ?? []
                 
                 await MainActor.run {
+                    print("[QueryEditor] 查询完成, rows=\(rows.count)")
+                    if let first = rows.first {
+                        print("[QueryEditor] 第一行: \(first)")
+                    }
                     self.results = rows
                     self.executionTime = Date().timeIntervalSince(startTime)
                     self.isExecuting = false

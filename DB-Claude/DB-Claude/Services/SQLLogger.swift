@@ -37,8 +37,9 @@ class SQLLogger: ObservableObject {
     
     @Published private(set) var logs: [SQLLogEntry] = []
     
-    // 配置
-    private let maxLogCount: Int = 1000  // 最多保留 1000 条记录
+    // 配置：分类型限制日志数量
+    private let maxSelectCount: Int = 500   // SELECT 语句最多保留 500 条
+    private let maxOtherCount: Int = 500    // 其他语句最多保留 500 条
     private let logFilePath: URL
     
     private init() {
@@ -55,10 +56,26 @@ class SQLLogger: ObservableObject {
         loadLogs()
     }
     
+    // MARK: - 判断是否为 SELECT 语句
+    private func isSelectStatement(_ sql: String) -> Bool {
+        let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return trimmed.hasPrefix("SELECT") || trimmed.hasPrefix("EXPLAIN")
+    }
+    
     // MARK: - 记录 SQL
     func log(connectionId: UUID?, connectionName: String, databaseType: String,
              sql: String, duration: TimeInterval, rowCount: Int? = nil,
              success: Bool = true, errorMessage: String? = nil) {
+        
+        // 打印到控制台（无论成功与否）
+        let status = success ? "✓" : "✗"
+        let durationStr = String(format: "%.3fs", duration)
+        let rowStr = rowCount.map { " (\($0) rows)" } ?? ""
+        print("[SQL \(status)] [\(databaseType)] \(durationStr)\(rowStr) | \(sql.prefix(100))\(sql.count > 100 ? "..." : "")")
+        
+        // 错误的 SQL 不保留到日志
+        guard success else { return }
+        
         let entry = SQLLogEntry(
             connectionId: connectionId,
             connectionName: connectionName,
@@ -72,21 +89,39 @@ class SQLLogger: ObservableObject {
         
         logs.insert(entry, at: 0)
         
-        // 限制日志数量
-        if logs.count > maxLogCount {
-            logs = Array(logs.prefix(maxLogCount))
-        }
+        // 分类型限制日志数量
+        trimLogsByType()
         
         // 异步保存
         Task {
             await saveLogs()
         }
+    }
+    
+    // MARK: - 分类型清理日志
+    private func trimLogsByType() {
+        var selectLogs: [SQLLogEntry] = []
+        var otherLogs: [SQLLogEntry] = []
         
-        // 打印到控制台
-        let status = success ? "✓" : "✗"
-        let durationStr = String(format: "%.3fs", duration)
-        let rowStr = rowCount.map { " (\($0) rows)" } ?? ""
-        print("[SQL \(status)] [\(databaseType)] \(durationStr)\(rowStr) | \(sql.prefix(100))\(sql.count > 100 ? "..." : "")")
+        // 分类
+        for log in logs {
+            if isSelectStatement(log.sql) {
+                selectLogs.append(log)
+            } else {
+                otherLogs.append(log)
+            }
+        }
+        
+        // 分别限制数量
+        if selectLogs.count > maxSelectCount {
+            selectLogs = Array(selectLogs.prefix(maxSelectCount))
+        }
+        if otherLogs.count > maxOtherCount {
+            otherLogs = Array(otherLogs.prefix(maxOtherCount))
+        }
+        
+        // 合并并按时间排序
+        logs = (selectLogs + otherLogs).sorted { $0.timestamp > $1.timestamp }
     }
     
     // MARK: - 清除日志
@@ -149,8 +184,26 @@ class SQLLogger: ObservableObject {
         
         do {
             let data = try Data(contentsOf: logFilePath)
-            logs = try JSONDecoder().decode([SQLLogEntry].self, from: data)
-            print("[SQLLogger] 已加载 \(logs.count) 条历史记录")
+            var loadedLogs = try JSONDecoder().decode([SQLLogEntry].self, from: data)
+            let oldCount = loadedLogs.count
+            
+            // 过滤掉错误的日志
+            loadedLogs = loadedLogs.filter { $0.success }
+            
+            logs = loadedLogs
+            
+            // 清理超出限制的日志
+            trimLogsByType()
+            
+            if logs.count < oldCount {
+                print("[SQLLogger] 已加载 \(oldCount) 条历史记录，清理后保留 \(logs.count) 条")
+                // 保存清理后的日志
+                Task {
+                    await saveLogs()
+                }
+            } else {
+                print("[SQLLogger] 已加载 \(logs.count) 条历史记录")
+            }
         } catch {
             print("[SQLLogger] 加载历史记录失败: \(error)")
         }

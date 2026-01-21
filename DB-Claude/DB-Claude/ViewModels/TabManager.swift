@@ -44,7 +44,7 @@ class TabManager {
         switch type {
         case .query: return "Query \(count)"
         case .structure(let table): return table
-        case .data(let table): return "\(table) (数据)"
+        case .data(let table): return "\(table)"
         }
     }
     

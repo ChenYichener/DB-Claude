@@ -648,3 +648,44 @@ struct ToolbarButtonStyle: ButtonStyle {
             .foregroundColor(AppColors.primaryText)
     }
 }
+
+// MARK: - 滚轮事件支持
+
+/// 处理鼠标滚轮事件的 NSView 包装
+struct ScrollWheelView: NSViewRepresentable {
+    let onScroll: (Double) -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = ScrollWheelNSView()
+        view.onScroll = onScroll
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? ScrollWheelNSView {
+            view.onScroll = onScroll
+        }
+    }
+    
+    class ScrollWheelNSView: NSView {
+        var onScroll: ((Double) -> Void)?
+        
+        override func scrollWheel(with event: NSEvent) {
+            // deltaY > 0 表示向上滚动（放大），< 0 表示向下滚动（缩小）
+            let delta = event.deltaY > 0 ? 1.0 : (event.deltaY < 0 ? -1.0 : 0)
+            if delta != 0 {
+                onScroll?(delta)
+            }
+        }
+    }
+}
+
+extension View {
+    /// 添加滚轮事件支持
+    func onScrollWheel(action: @escaping (Double) -> Void) -> some View {
+        self.overlay(
+            ScrollWheelView(onScroll: action)
+                .allowsHitTesting(true)
+        )
+    }
+}

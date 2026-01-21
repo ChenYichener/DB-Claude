@@ -10,45 +10,6 @@ struct SQLLogView: View {
     @State private var showErrorsOnly: Bool = false
     @State private var selectedStatementType: SQLStatementType = .all
     
-    // SQL 语句类型枚举
-    enum SQLStatementType: String, CaseIterable {
-        case all = "全部"
-        case select = "SELECT"
-        case insert = "INSERT"
-        case update = "UPDATE"
-        case delete = "DELETE"
-        case alter = "ALTER"
-        case create = "CREATE"
-        case drop = "DROP"
-        case other = "其他"
-        
-        var color: Color {
-            switch self {
-            case .all: return AppColors.secondaryText
-            case .select: return AppColors.accent
-            case .insert: return AppColors.success
-            case .update: return AppColors.warning
-            case .delete: return AppColors.error
-            case .alter: return .purple
-            case .create: return .teal
-            case .drop: return .red
-            case .other: return AppColors.secondaryText
-            }
-        }
-        
-        static func detect(from sql: String) -> SQLStatementType {
-            let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            if trimmed.hasPrefix("SELECT") || trimmed.hasPrefix("EXPLAIN") { return .select }
-            if trimmed.hasPrefix("INSERT") { return .insert }
-            if trimmed.hasPrefix("UPDATE") { return .update }
-            if trimmed.hasPrefix("DELETE") { return .delete }
-            if trimmed.hasPrefix("ALTER") { return .alter }
-            if trimmed.hasPrefix("CREATE") { return .create }
-            if trimmed.hasPrefix("DROP") { return .drop }
-            return .other
-        }
-    }
-    
     private var filteredLogs: [SQLLogEntry] {
         var result = logger.logs
         
@@ -97,10 +58,35 @@ struct SQLLogView: View {
         return connections
     }
     
+    /// 计算各类型数量
+    private func countForType(_ type: SQLStatementType) -> Int {
+        var logs = logger.logs
+        
+        // 先应用连接筛选
+        if let connectionId = selectedConnectionId {
+            logs = logs.filter { $0.connectionId == connectionId }
+        }
+        
+        // 应用状态筛选
+        if showSuccessOnly {
+            logs = logs.filter { $0.success }
+        } else if showErrorsOnly {
+            logs = logs.filter { !$0.success }
+        }
+        
+        if type == .all {
+            return logs.count
+        }
+        return logs.filter { SQLStatementType.detect(from: $0.sql) == type }.count
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // 工具栏
             toolbarView
+            
+            // 类型筛选器
+            typeFilterView
             
             AppDivider()
             
@@ -108,7 +94,7 @@ struct SQLLogView: View {
             if filteredLogs.isEmpty {
                 AppEmptyState(
                     icon: "doc.text.magnifyingglass",
-                    title: "暂无 SQL 执行记录",
+                    title: selectedStatementType == .all ? "暂无 SQL 执行记录" : "暂无 \(selectedStatementType.rawValue) 记录",
                     message: "执行查询后，SQL 日志会显示在这里"
                 )
             } else {
@@ -174,20 +160,6 @@ struct SQLLogView: View {
             }
             .frame(width: 100)
             
-            // 语句类型筛选
-            Picker("类型", selection: $selectedStatementType) {
-                ForEach(SQLStatementType.allCases, id: \.self) { type in
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(type.color)
-                            .frame(width: 6, height: 6)
-                        Text(type.rawValue)
-                    }
-                    .tag(type)
-                }
-            }
-            .frame(width: 110)
-            
             Spacer()
             
             // 统计信息
@@ -216,6 +188,66 @@ struct SQLLogView: View {
         .padding(.horizontal, AppSpacing.md)
         .padding(.vertical, AppSpacing.sm)
         .background(AppColors.secondaryBackground)
+    }
+    
+    // MARK: - 类型筛选器
+    private var typeFilterView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: AppSpacing.xs) {
+                // 主要类型
+                ForEach([SQLStatementType.all, .select, .insert, .update, .delete], id: \.self) { type in
+                    LogFilterChip(
+                        title: type.rawValue,
+                        icon: type.icon,
+                        isSelected: selectedStatementType == type,
+                        count: type == .all ? nil : countForType(type)
+                    ) {
+                        withAnimation(AppAnimation.fast) {
+                            selectedStatementType = type
+                        }
+                    }
+                }
+                
+                // 更多类型菜单
+                Menu {
+                    ForEach([SQLStatementType.alter, .create, .drop, .other], id: \.self) { type in
+                        Button {
+                            withAnimation(AppAnimation.fast) {
+                                selectedStatementType = type
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: type.icon)
+                                Text(type.rawValue)
+                                Spacer()
+                                if countForType(type) > 0 {
+                                    Text("\(countForType(type))")
+                                        .foregroundColor(.secondary)
+                                }
+                                if selectedStatementType == type {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    let secondaryTypes: [SQLStatementType] = [.alter, .create, .drop, .other]
+                    LogFilterChip(
+                        title: secondaryTypes.contains(selectedStatementType) ? selectedStatementType.rawValue : "更多",
+                        icon: secondaryTypes.contains(selectedStatementType) ? selectedStatementType.icon : "ellipsis",
+                        isSelected: secondaryTypes.contains(selectedStatementType),
+                        count: nil
+                    ) {}
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                
+                Spacer()
+            }
+            .padding(.horizontal, AppSpacing.md)
+            .padding(.vertical, AppSpacing.xs)
+        }
+        .background(AppColors.secondaryBackground.opacity(0.5))
     }
     
     // MARK: - 日志列表
@@ -404,8 +436,46 @@ struct SQLLogRow: View {
         else { return AppColors.error }
     }
     
-    private var statementType: SQLLogView.SQLStatementType {
-        SQLLogView.SQLStatementType.detect(from: log.sql)
+    private var statementType: SQLStatementType {
+        SQLStatementType.detect(from: log.sql)
+    }
+}
+
+// MARK: - 筛选芯片组件
+private struct LogFilterChip: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    let count: Int?
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                Text(title)
+                    .font(AppTypography.small)
+                if let count = count, count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.white.opacity(0.3) : AppColors.tertiaryBackground)
+                        )
+                }
+            }
+            .padding(.horizontal, AppSpacing.sm)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: AppRadius.sm)
+                    .fill(isSelected ? AppColors.accent : AppColors.secondaryBackground)
+            )
+            .foregroundColor(isSelected ? .white : AppColors.primaryText)
+        }
+        .buttonStyle(.plain)
     }
 }
 
