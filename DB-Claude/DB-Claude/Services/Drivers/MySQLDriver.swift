@@ -44,6 +44,15 @@ class MySQLDriver: DatabaseDriver {
         ]
     }
     
+    func fetchColumnsWithInfo(for table: String) async throws -> [ColumnInfo] {
+        // 占位符实现，返回 mock 字段信息
+        return [
+            ColumnInfo(name: "id", comment: "主键", type: "INT"),
+            ColumnInfo(name: "name", comment: "名称", type: "VARCHAR(255)"),
+            ColumnInfo(name: "gmt_create", comment: "创建时间", type: "DATETIME")
+        ]
+    }
+    
     func execute(sql: String) async throws -> [[String: String]] {
         // Return dummy result for "SELECT 1" or similar
         if sql.contains("SELECT 1") {

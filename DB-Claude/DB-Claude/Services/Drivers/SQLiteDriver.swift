@@ -51,6 +51,23 @@ class SQLiteDriver: DatabaseDriver {
         return tables.map { TableInfo(name: $0, comment: nil) }
     }
     
+    func fetchColumnsWithInfo(for table: String) async throws -> [ColumnInfo] {
+        // SQLite 使用 PRAGMA table_info 获取字段信息
+        // SQLite 不支持字段级别的 comment
+        let sql = "PRAGMA table_info('\(table)')"
+        let results = try await execute(sql: sql)
+        
+        // 跳过元数据行
+        let dataRows = results.dropFirst()
+        
+        return dataRows.compactMap { row in
+            guard let name = row["name"] else { return nil }
+            let type = row["type"]
+            // SQLite 不支持 comment，返回 nil
+            return ColumnInfo(name: name, comment: nil, type: type)
+        }
+    }
+    
     func execute(sql: String) async throws -> [[String: String]] {
         let startTime = Date()
         

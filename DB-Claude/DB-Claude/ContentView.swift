@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var selectedTable: String? // For navigation link
     @State private var tables: [TableInfo] = []
     @State private var tableSearchText: String = "" // 表搜索文本
+    @State private var columnsMap: [String: [ColumnInfo]] = [:] // 表名 -> 字段信息
     
     // 过滤后的表列表
     private var filteredTables: [TableInfo] {
@@ -117,6 +118,7 @@ struct ContentView: View {
                                     ForEach(filteredTables) { tableInfo in
                                         TableRow(
                                             tableInfo: tableInfo,
+                                            columns: columnsMap[tableInfo.name] ?? [],
                                             isSelected: selectedTable == tableInfo.name,
                                             onSingleTap: {
                                                 selectedTable = tableInfo.name
@@ -290,6 +292,19 @@ struct ContentView: View {
             currentDriver = driver
             try await driver.connect()
             tables = try await driver.fetchTablesWithInfo()
+            
+            // 加载每个表的字段信息（用于拖拽生成字段列表）
+            var newColumnsMap: [String: [ColumnInfo]] = [:]
+            for tableInfo in tables {
+                do {
+                    let columns = try await driver.fetchColumnsWithInfo(for: tableInfo.name)
+                    newColumnsMap[tableInfo.name] = columns
+                } catch {
+                    // 单个表加载失败不影响整体
+                    print("加载表 \(tableInfo.name) 字段信息失败: \(error)")
+                }
+            }
+            columnsMap = newColumnsMap
             
             // 加载成功后，如果当前没有该连接的查询标签页，自动创建一个
             await MainActor.run {
@@ -707,14 +722,24 @@ struct TabItemView: View {
     }
 }
 
-// 自定义表行 - 紧凑设计
+// 自定义表行 - 紧凑设计，支持拖拽
 struct TableRow: View {
     let tableInfo: TableInfo
+    let columns: [ColumnInfo]  // 表的字段信息
     let isSelected: Bool
     let onSingleTap: () -> Void
     let onDoubleTap: () -> Void
     
     @State private var isHovering = false
+
+    /// 生成拖拽时的字段列表文本
+    /// 格式: id id, gmt_create 创建时间, name 名称
+    private var dragText: String {
+        if columns.isEmpty {
+            return tableInfo.name
+        }
+        return columns.map { $0.displayText }.joined(separator: ", ")
+    }
 
     var body: some View {
         HStack(spacing: AppSpacing.xs) {
@@ -754,6 +779,8 @@ struct TableRow: View {
         .onTapGesture {
             onSingleTap()
         }
+        // 拖拽支持：拖拽表名到 QueryEditor 时生成字段列表
+        .draggable(dragText)
     }
     
     private var backgroundColor: Color {

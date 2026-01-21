@@ -1232,6 +1232,7 @@ struct MockDriver: DatabaseDriver {
     func fetchDatabases() async throws -> [String] { [] }
     func fetchTables() async throws -> [String] { [] }
     func fetchTablesWithInfo() async throws -> [TableInfo] { [] }
+    func fetchColumnsWithInfo(for table: String) async throws -> [ColumnInfo] { [] }
     func execute(sql: String) async throws -> [[String: String]] {
         // 模拟 COUNT 查询
         if sql.lowercased().contains("count") {

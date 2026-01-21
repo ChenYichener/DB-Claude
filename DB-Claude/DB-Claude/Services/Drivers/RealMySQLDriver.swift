@@ -221,6 +221,34 @@ class RealMySQLDriver: DatabaseDriver {
         }
     }
     
+    func fetchColumnsWithInfo(for table: String) async throws -> [ColumnInfo] {
+        return try await executeWithReconnect {
+            guard let client = self.client else { return [] }
+            
+            // 获取当前数据库名
+            let dbName = self.connection.databaseName ?? ""
+            guard !dbName.isEmpty else { return [] }
+            
+            // 从 information_schema 查询字段名和 comment
+            let sql = """
+                SELECT COLUMN_NAME, COLUMN_COMMENT, COLUMN_TYPE
+                FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = '\(dbName)' AND TABLE_NAME = '\(table)'
+                ORDER BY ORDINAL_POSITION
+                """
+            let rows = try await client.query(sql).get()
+            
+            return rows.compactMap { row in
+                guard let columnName = row.column("COLUMN_NAME")?.string else { return nil }
+                let comment = row.column("COLUMN_COMMENT")?.string
+                let columnType = row.column("COLUMN_TYPE")?.string
+                // 过滤掉空 comment
+                let validComment = (comment?.isEmpty == true) ? nil : comment
+                return ColumnInfo(name: columnName, comment: validComment, type: columnType)
+            }
+        }
+    }
+    
     func execute(sql: String) async throws -> [[String: String]] {
         let startTime = Date()
         
@@ -473,6 +501,7 @@ class RealMySQLDriver: DatabaseDriver {
     func fetchDatabases() async throws -> [String] { return [] }
     func fetchTables() async throws -> [String] { return [] }
     func fetchTablesWithInfo() async throws -> [TableInfo] { return [] }
+    func fetchColumnsWithInfo(for table: String) async throws -> [ColumnInfo] { return [] }
     func execute(sql: String) async throws -> [[String: String]] { return [] }
     func getDDL(for table: String) async throws -> String { return "" }
 }
